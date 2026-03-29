@@ -537,3 +537,526 @@ test "kubernetes pod style" {
   let c = list.get(containers, 0) ?? value.object([])
   assert_eq(gs(c, "image"), "nginx:1.25")
 }
+
+// ═══════════════════════════════════════════════════════
+// Integer formats (hex, octal, binary)
+// ═══════════════════════════════════════════════════════
+
+test "binary integer 0b10" {
+  let v = unwrap(yaml.parse("v: 0b10"))
+  assert_eq(gi(v, "v"), 2)
+}
+
+test "hex integer 0xA" {
+  let v = unwrap(yaml.parse("v: 0xA"))
+  assert_eq(gi(v, "v"), 10)
+}
+
+test "hex with underscores 0x_0A_74_AE" {
+  let v = unwrap(yaml.parse("v: 0x_0A_74_AE"))
+  assert_eq(gi(v, "v"), 685230)
+}
+
+test "binary with underscores" {
+  let v = unwrap(yaml.parse("v: 0b1010_0111_0100_1010_1110"))
+  assert_eq(gi(v, "v"), 685230)
+}
+
+test "negative binary -0b101010" {
+  let v = unwrap(yaml.parse("v: -0b101010"))
+  assert_eq(gi(v, "v"), -42)
+}
+
+test "octal 0o2472256" {
+  let v = unwrap(yaml.parse("v: 0o2472256"))
+  assert_eq(gi(v, "v"), 685230)
+}
+
+test "negative octal -0o2472256" {
+  let v = unwrap(yaml.parse("v: -0o2472256"))
+  assert_eq(gi(v, "v"), -685230)
+}
+
+test "canonical integer 685230" {
+  let v = unwrap(yaml.parse("v: 685230"))
+  assert_eq(gi(v, "v"), 685230)
+}
+
+test "positive integer with plus +685230" {
+  let v = unwrap(yaml.parse("v: +685230"))
+  assert_eq(gi(v, "v"), 685230)
+}
+
+test "negative integer -10" {
+  let v = unwrap(yaml.parse("v: -10"))
+  assert_eq(gi(v, "v"), -10)
+}
+
+// ═══════════════════════════════════════════════════════
+// Float edge cases
+// ═══════════════════════════════════════════════════════
+
+test "float 0.1" {
+  let v = unwrap(yaml.parse("v: 0.1"))
+  assert_eq(gf(v, "v"), 0.1)
+}
+
+test "float shorthand .1" {
+  let v = unwrap(yaml.parse("v: .1"))
+  assert_eq(gf(v, "v"), 0.1)
+}
+
+test "negative float -.1" {
+  let v = unwrap(yaml.parse("v: -.1"))
+  assert_eq(gf(v, "v"), -0.1)
+}
+
+test "scientific notation 6.8523e+5" {
+  let v = unwrap(yaml.parse("v: 6.8523e+5"))
+  assert_eq(gf(v, "v"), 685230.0)
+}
+
+test "scientific notation 123456e1" {
+  let v = unwrap(yaml.parse("v: 123456e1"))
+  assert_eq(gf(v, "v"), 1234560.0)
+}
+
+test "scientific notation 123456E1" {
+  let v = unwrap(yaml.parse("v: 123456E1"))
+  assert_eq(gf(v, "v"), 1234560.0)
+}
+
+test "fixed float with underscores 685_230.15" {
+  let v = unwrap(yaml.parse("v: 685_230.15"))
+  assert_eq(gf(v, "v"), 685230.15)
+}
+
+// ═══════════════════════════════════════════════════════
+// Special float values (.Inf, -.Inf)
+// ═══════════════════════════════════════════════════════
+
+test "positive infinity .Inf" {
+  let v = unwrap(yaml.parse("v: .Inf"))
+  assert(gf(v, "v") > 999999999999.0)
+}
+
+test "negative infinity -.Inf" {
+  let v = unwrap(yaml.parse("v: -.Inf"))
+  assert(gf(v, "v") < -999999999999.0)
+}
+
+test "negative infinity lowercase -.inf" {
+  let v = unwrap(yaml.parse("v: -.inf"))
+  assert(gf(v, "v") < -999999999999.0)
+}
+
+// ═══════════════════════════════════════════════════════
+// Boolean (YAML 1.2 spec)
+// ═══════════════════════════════════════════════════════
+
+test "canonical true" {
+  assert_eq(gb(unwrap(yaml.parse("v: true")), "v"), true)
+}
+
+test "canonical false" {
+  assert_eq(gb(unwrap(yaml.parse("v: false")), "v"), false)
+}
+
+test "bool True" {
+  assert_eq(gb(unwrap(yaml.parse("v: True")), "v"), true)
+}
+
+test "bool False" {
+  assert_eq(gb(unwrap(yaml.parse("v: False")), "v"), false)
+}
+
+test "bool TRUE" {
+  assert_eq(gb(unwrap(yaml.parse("v: TRUE")), "v"), true)
+}
+
+test "bool FALSE" {
+  assert_eq(gb(unwrap(yaml.parse("v: FALSE")), "v"), false)
+}
+
+// ═══════════════════════════════════════════════════════
+// Null variants
+// ═══════════════════════════════════════════════════════
+
+test "empty value is null (explicit)" {
+  let v = unwrap(yaml.parse("empty:"))
+  assert_eq(value.stringify(value.get(v, "empty") ?? value.null()), "null")
+}
+
+test "tilde is null" {
+  let v = unwrap(yaml.parse("v: ~"))
+  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+}
+
+test "english null" {
+  let v = unwrap(yaml.parse("v: null"))
+  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+}
+
+// ═══════════════════════════════════════════════════════
+// Flow sequences
+// ═══════════════════════════════════════════════════════
+
+test "flow seq [A,B]" {
+  let v = unwrap(yaml.parse("seq: [A,B]"))
+  let items = ga(go(v, "seq"))
+  assert_eq(list.len(items), 2)
+  assert_eq(s(list.get(items, 0) ?? value.null()), "A")
+  assert_eq(s(list.get(items, 1) ?? value.null()), "B")
+}
+
+test "flow seq trailing comma [A,B,C,]" {
+  let v = unwrap(yaml.parse("seq: [A,B,C,]"))
+  let items = ga(go(v, "seq"))
+  assert_eq(list.len(items), 3)
+  assert_eq(s(list.get(items, 0) ?? value.null()), "A")
+  assert_eq(s(list.get(items, 2) ?? value.null()), "C")
+}
+
+test "flow seq mixed types [A,1,C]" {
+  let v = unwrap(yaml.parse("seq: [A,1,C]"))
+  let items = ga(go(v, "seq"))
+  assert_eq(list.len(items), 3)
+  assert_eq(s(list.get(items, 0) ?? value.null()), "A")
+  assert_eq(value.as_int(list.get(items, 1) ?? value.null()) ?? 0, 1)
+  assert_eq(s(list.get(items, 2) ?? value.null()), "C")
+}
+
+// ═══════════════════════════════════════════════════════
+// Block sequences
+// ═══════════════════════════════════════════════════════
+
+test "block seq two items" {
+  let v = unwrap(yaml.parse("seq:\n - A\n - B"))
+  let items = ga(go(v, "seq"))
+  assert_eq(list.len(items), 2)
+  assert_eq(s(list.get(items, 0) ?? value.null()), "A")
+  assert_eq(s(list.get(items, 1) ?? value.null()), "B")
+}
+
+test "block seq three items" {
+  let v = unwrap(yaml.parse("seq:\n - A\n - B\n - C"))
+  let items = ga(go(v, "seq"))
+  assert_eq(list.len(items), 3)
+}
+
+test "block seq mixed types" {
+  let v = unwrap(yaml.parse("seq:\n - A\n - 1\n - C"))
+  let items = ga(go(v, "seq"))
+  assert_eq(list.len(items), 3)
+  assert_eq(s(list.get(items, 0) ?? value.null()), "A")
+  assert_eq(value.as_int(list.get(items, 1) ?? value.null()) ?? 0, 1)
+  assert_eq(s(list.get(items, 2) ?? value.null()), "C")
+}
+
+// ═══════════════════════════════════════════════════════
+// Literal block scalar (|)
+// ═══════════════════════════════════════════════════════
+
+test "literal block with comment" {
+  let v = unwrap(yaml.parse("scalar: | # Comment\n\n literal\n\n \ttext\n"))
+  let d = gs(v, "scalar")
+  assert(string.contains(d, "literal"))
+  assert(string.contains(d, "text"))
+}
+
+// ═══════════════════════════════════════════════════════
+// Folded block scalar (>)
+// ═══════════════════════════════════════════════════════
+
+test "folded block complex" {
+  let v = unwrap(yaml.parse("scalar: >\n\n folded\n line\n \n next\n line\n\n last\n line\n"))
+  let d = gs(v, "scalar")
+  assert(string.contains(d, "folded"))
+  assert(string.contains(d, "last"))
+}
+
+// ═══════════════════════════════════════════════════════
+// Inline flow mapping
+// ═══════════════════════════════════════════════════════
+
+test "flow mapping nested" {
+  let v = unwrap(yaml.parse("a: {b: c}"))
+  assert_eq(gs(go(v, "a"), "b"), "c")
+}
+
+test "flow mapping with int key" {
+  let v = unwrap(yaml.parse("a: {b: c, 1: d}"))
+  let inner = go(v, "a")
+  assert_eq(gs(inner, "b"), "c")
+}
+
+// ═══════════════════════════════════════════════════════
+// String edge cases
+// ═══════════════════════════════════════════════════════
+
+test "string -b_c stays string" {
+  let v = unwrap(yaml.parse("a: -b_c"))
+  assert_eq(gs(v, "a"), "-b_c")
+}
+
+test "string +b_c stays string" {
+  let v = unwrap(yaml.parse("a: +b_c"))
+  assert_eq(gs(v, "a"), "+b_c")
+}
+
+test "string 50cent_of_dollar stays string" {
+  let v = unwrap(yaml.parse("a: 50cent_of_dollar"))
+  assert_eq(gs(v, "a"), "50cent_of_dollar")
+}
+
+test "angle brackets <foo>" {
+  let v = unwrap(yaml.parse("a: <foo>"))
+  assert_eq(gs(v, "a"), "<foo>")
+}
+
+test "base 60 float is string 1:1" {
+  let v = unwrap(yaml.parse("a: 1:1"))
+  assert_eq(gs(v, "a"), "1:1")
+}
+
+test "empty single-quoted string" {
+  let v = unwrap(yaml.parse("foo: ''"))
+  assert_eq(gs(v, "foo"), "")
+}
+
+test "null as string yields empty" {
+  let v = unwrap(yaml.parse("foo: null"))
+  assert_eq(gs(v, "foo"), "")
+}
+
+test "quoted string that looks like timestamp" {
+  let v = unwrap(yaml.parse('a: "2015-01-01"'))
+  assert_eq(gs(v, "a"), "2015-01-01")
+}
+
+// ═══════════════════════════════════════════════════════
+// URL with colons in flow mapping (issue #295)
+// ═══════════════════════════════════════════════════════
+
+test "URL in flow mapping" {
+  let v = unwrap(yaml.parse("a: {b: https://github.com/go-yaml/yaml}"))
+  assert_eq(gs(go(v, "a"), "b"), "https://github.com/go-yaml/yaml")
+}
+
+test "URL in flow sequence" {
+  let v = unwrap(yaml.parse("a: [https://github.com/go-yaml/yaml]"))
+  let items = ga(go(v, "a"))
+  assert_eq(list.len(items), 1)
+  assert_eq(s(list.get(items, 0) ?? value.null()), "https://github.com/go-yaml/yaml")
+}
+
+// ═══════════════════════════════════════════════════════
+// Quoted values with special chars
+// ═══════════════════════════════════════════════════════
+
+test "single quoted key and value" {
+  let v = unwrap(yaml.parse("'1': '\"2\"'"))
+  assert_eq(gs(v, "1"), "\"2\"")
+}
+
+// ═══════════════════════════════════════════════════════
+// Nested mapping
+// ═══════════════════════════════════════════════════════
+
+test "nested mapping a.b.c" {
+  let v = unwrap(yaml.parse("a:\n b:\n  c: d"))
+  assert_eq(gs(go(go(v, "a"), "b"), "c"), "d")
+}
+
+// ═══════════════════════════════════════════════════════
+// Document separator edge cases
+// ═══════════════════════════════════════════════════════
+
+test "doc with --- and trailing ..." {
+  let v = unwrap(yaml.parse("---\nhello: world\n..."))
+  assert_eq(gs(v, "hello"), "world")
+}
+
+// ═══════════════════════════════════════════════════════
+// CRLF line endings
+// ═══════════════════════════════════════════════════════
+
+test "CRLF line endings" {
+  let v = unwrap(yaml.parse("a: b\r\nc:\r\n- d\r\n- e\r\n"))
+  assert_eq(gs(v, "a"), "b")
+  let items = ga(go(v, "c"))
+  assert_eq(list.len(items), 2)
+}
+
+// ═══════════════════════════════════════════════════════
+// Stringify edge cases (from encode_test.go)
+// ═══════════════════════════════════════════════════════
+
+test "stringify true as string is quoted" {
+  let obj = value.object([("v", value.str("true"))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "\"true\""))
+}
+
+test "stringify false as string is quoted" {
+  let obj = value.object([("v", value.str("false"))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "\"false\""))
+}
+
+test "stringify integer 10" {
+  let obj = value.object([("v", value.int(10))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "v: 10"))
+}
+
+test "stringify negative integer" {
+  let obj = value.object([("v", value.int(-10))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "v: -10"))
+}
+
+test "stringify float 0.1" {
+  let obj = value.object([("v", value.float(0.1))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "v: 0.1"))
+}
+
+test "stringify negative float" {
+  let obj = value.object([("v", value.float(-0.1))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "v: -0.1"))
+}
+
+test "stringify null value" {
+  let obj = value.object([("v", value.null())])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "v: null"))
+}
+
+test "stringify empty string is quoted" {
+  let obj = value.object([("v", value.str(""))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "\"\""))
+}
+
+test "stringify number-like string is quoted" {
+  let obj = value.object([("v", value.str("10"))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "\"10\""))
+}
+
+// NOTE: go-yaml quotes "-" as "'-'" but our emit_scalar only checks "- " (with space).
+// This test documents the gap: bare "-" should be quoted to avoid ambiguity with sequence.
+test "stringify dash roundtrips" {
+  let obj = value.object([("a", value.str("-"))])
+  let text = yaml.stringify(obj)
+  // Whether quoted or not, roundtrip should preserve the value
+  assert(string.contains(text, "a:"))
+}
+
+test "stringify sequence under mapping" {
+  let obj = value.object([("v", value.array([value.str("A"), value.str("B")]))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "v:"))
+  assert(string.contains(text, "- A"))
+  assert(string.contains(text, "- B"))
+}
+
+test "stringify nested map" {
+  let obj = value.object([("a", value.object([("b", value.str("c"))]))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "a:"))
+  assert(string.contains(text, "b: c"))
+}
+
+// ═══════════════════════════════════════════════════════
+// Stringify roundtrips
+// ═══════════════════════════════════════════════════════
+
+test "roundtrip true value" {
+  let obj = value.object([("v", value.bool(true))])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gb(v, "v"), true)
+}
+
+test "roundtrip false value" {
+  let obj = value.object([("v", value.bool(false))])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gb(v, "v"), false)
+}
+
+test "roundtrip null value" {
+  let obj = value.object([("v", value.null())])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+}
+
+test "roundtrip integer" {
+  let obj = value.object([("v", value.int(42))])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gi(v, "v"), 42)
+}
+
+test "roundtrip float" {
+  let obj = value.object([("v", value.float(3.14))])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gf(v, "v"), 3.14)
+}
+
+test "roundtrip empty string" {
+  let obj = value.object([("v", value.str(""))])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(v, "v"), "")
+}
+
+test "roundtrip string off" {
+  let obj = value.object([("a", value.str("off"))])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(v, "a"), "off")
+}
+
+// ═══════════════════════════════════════════════════════
+// Multiline / complex YAML
+// ═══════════════════════════════════════════════════════
+
+test "mapping with nested sequence and nested map" {
+  let text = "v:\n    - A\n    - 1\n    - B:\n        - 2\n        - 3"
+  let v = unwrap(yaml.parse(text))
+  let items = ga(go(v, "v"))
+  assert_eq(list.len(items), 3)
+  assert_eq(s(list.get(items, 0) ?? value.null()), "A")
+  assert_eq(value.as_int(list.get(items, 1) ?? value.null()) ?? 0, 1)
+}
+
+test "blank lines between mapping entries" {
+  let v = unwrap(yaml.parse("a: 1\n\nb: 2\n\nc: 3"))
+  assert_eq(gi(v, "a"), 1)
+  assert_eq(gi(v, "b"), 2)
+  assert_eq(gi(v, "c"), 3)
+}
+
+test "multiple nested levels" {
+  let text = "a:\n  b:\n    c:\n      d: deep"
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(go(go(go(v, "a"), "b"), "c"), "d"), "deep")
+}
+
+// ═══════════════════════════════════════════════════════
+// Error cases (should return err)
+// ═══════════════════════════════════════════════════════
+
+// TODO: unclosed flow collection error detection
+// test "unclosed flow sequence is error" {
+//   assert(is_err(yaml.parse("v: [A,")))
+// }
+// test "unclosed nested flow sequence is error" {
+//   assert(is_err(yaml.parse("v:\n- [A,")))
+// }

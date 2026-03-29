@@ -8,7 +8,8 @@
 // ── Public API ──────────────────────────────────────
 
 effect fn parse(text: String) -> Result[Value, String] = {
-  let lines = string.lines(text)
+  let normalized = string.replace(text, "\r\n", "\n")
+  let lines = string.lines(normalized)
   let stripped = strip_document_markers(lines)
   let cleaned = stripped |> list.map((l) => trim_comment(l))
   parse_from_lines(cleaned)
@@ -102,7 +103,8 @@ local effect fn collect_mapping_entries(lines: List[String], pos: Int, base_inde
         match find_colon(trimmed) {
           none => ok((value.object(pairs), pos)),
           some(cp) => {
-            let key = string.trim(string.slice(trimmed, 0, cp))
+            let raw_key = string.trim(string.slice(trimmed, 0, cp))
+            let key = unquote_key(raw_key)
             let after = string.trim(string.drop(trimmed, cp + 1))
             if after == "|" or after == ">" or after == "|+" or after == "|-" or after == ">+" or after == ">-" then {
               let (val, next_pos) = parse_block_scalar(lines, pos + 1, base_indent, after)!
@@ -120,6 +122,13 @@ local effect fn collect_mapping_entries(lines: List[String], pos: Int, base_inde
     }
   }
 }
+
+local fn unquote_key(s: String) -> String =
+  if string.starts_with(s, "'") and string.ends_with(s, "'") and string.len(s) >= 2 then
+    string.slice(s, 1, string.len(s) - 1)
+  else if string.starts_with(s, "\"") and string.ends_with(s, "\"") and string.len(s) >= 2 then
+    parse_quoted_string(string.slice(s, 1, string.len(s) - 1))
+  else s
 
 local fn find_colon(s: String) -> Option[Int] =
   find_colon_rec(s, 0, false)
@@ -216,7 +225,13 @@ local effect fn parse_nested_value(lines: List[String], pos: Int, parent_indent:
       let (offset, next_line) = entry
       let actual_pos = pos + offset
       let child_indent = indent_of(next_line)
-      if child_indent <= parent_indent then ok((value.null(), actual_pos))
+      if child_indent < parent_indent then ok((value.null(), actual_pos))
+      else if child_indent == parent_indent then {
+        // Same-level sequence after a key: is allowed in YAML (e.g. "key:\n- val")
+        let trimmed = string.trim(next_line)
+        if string.starts_with(trimmed, "- ") or trimmed == "-" then parse_sequence(lines, actual_pos, child_indent)
+        else ok((value.null(), actual_pos))
+      }
       else {
         let trimmed = string.trim(next_line)
         if string.starts_with(trimmed, "- ") or trimmed == "-" then parse_sequence(lines, actual_pos, child_indent)
@@ -292,15 +307,73 @@ local fn parse_scalar(s: String) -> Value = {
     value.str(string.slice(s, 1, string.len(s) - 1))
   else if string.starts_with(s, "\"") and string.ends_with(s, "\"") and string.len(s) >= 2 then
     value.str(parse_quoted_string(string.slice(s, 1, string.len(s) - 1)))
-  // Numbers
-  else match int.parse(s) {
+  // Infinity (yaml.v3 compatible: .Inf, .inf, -.Inf, +.Inf)
+  else if low == ".inf" or low == "+.inf" then value.float(1.0 / 0.0)
+  else if low == "-.inf" then value.float(-1.0 / 0.0)
+  else if low == ".nan" then value.float(0.0 / 0.0)
+  // Numbers (strip underscores, handle hex/octal/binary)
+  else parse_number(s)
+}
+
+local fn parse_number(s: String) -> Value = {
+  let clean = string.replace(s, "_", "")
+  // Hex
+  if string.starts_with(clean, "0x") or string.starts_with(clean, "0X") then
+    match int.from_hex(string.drop(clean, 2)) { ok(n) => value.int(n), err(_) => value.str(s) }
+  // Octal (0o prefix or legacy 0 prefix)
+  else if string.starts_with(clean, "0o") or string.starts_with(clean, "0O") then
+    match parse_octal(string.drop(clean, 2)) { ok(n) => value.int(n), err(_) => value.str(s) }
+  else if string.starts_with(clean, "-0o") or string.starts_with(clean, "-0O") then
+    match parse_octal(string.drop(clean, 3)) { ok(n) => value.int(0 - n), err(_) => value.str(s) }
+  // Binary
+  else if string.starts_with(clean, "0b") or string.starts_with(clean, "0B") then
+    match parse_binary(string.drop(clean, 2)) { ok(n) => value.int(n), err(_) => value.str(s) }
+  else if string.starts_with(clean, "-0b") or string.starts_with(clean, "-0B") then
+    match parse_binary(string.drop(clean, 3)) { ok(n) => value.int(0 - n), err(_) => value.str(s) }
+  // Legacy octal (0NNN without 0o)
+  else if string.len(clean) > 1 and string.starts_with(clean, "0") and not string.contains(clean, ".") and not string.contains(clean, "e") then
+    match parse_octal(string.drop(clean, 1)) { ok(n) => value.int(n), err(_) => try_decimal(clean, s) }
+  else if string.len(clean) > 2 and string.starts_with(clean, "-0") and not string.contains(clean, ".") then
+    match parse_octal(string.drop(clean, 2)) { ok(n) => value.int(0 - n), err(_) => try_decimal(clean, s) }
+  // Decimal int/float
+  else try_decimal(clean, s)
+}
+
+local fn try_decimal(clean: String, original: String) -> Value =
+  match int.parse(clean) {
     ok(n) => value.int(n),
-    err(_) => match float.parse(s) {
+    err(_) => match float.parse(clean) {
       ok(f) => value.float(f),
-      err(_) => value.str(s),
+      err(_) => value.str(original),
     },
   }
-}
+
+local fn parse_octal(s: String) -> Result[Int, String] =
+  parse_octal_rec(string.chars(s), 0)
+
+local fn parse_octal_rec(chars: List[String], acc: Int) -> Result[Int, String] =
+  match list.first(chars) {
+    none => ok(acc),
+    some(ch) => {
+      let cp = string.codepoint(ch) ?? 0
+      let d = cp - 48
+      if d >= 0 and d < 8 then parse_octal_rec(list.drop(chars, 1), acc * 8 + d)
+      else err("invalid octal")
+    },
+  }
+
+local fn parse_binary(s: String) -> Result[Int, String] =
+  parse_binary_rec(string.chars(s), 0)
+
+local fn parse_binary_rec(chars: List[String], acc: Int) -> Result[Int, String] =
+  match list.first(chars) {
+    none => ok(acc),
+    some(ch) => {
+      if ch == "0" then parse_binary_rec(list.drop(chars, 1), acc * 2)
+      else if ch == "1" then parse_binary_rec(list.drop(chars, 1), acc * 2 + 1)
+      else err("invalid binary")
+    },
+  }
 
 local fn parse_quoted_string(s: String) -> String =
   replace_escapes(s, 0, "")
