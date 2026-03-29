@@ -1,0 +1,265 @@
+import self as yaml
+import json
+
+fn unwrap(r: Result[Value, String]) -> Value = match r {
+  ok(v) => v,
+  err(e) => { println("ERROR: ${e}"); value.null() },
+}
+
+fn gs(v: Value, key: String) -> String =
+  value.as_string(value.get(v, key) ?? value.null()) ?? ""
+
+fn gi(v: Value, key: String) -> Int =
+  value.as_int(value.get(v, key) ?? value.null()) ?? 0
+
+fn gf(v: Value, key: String) -> Float =
+  value.as_float(value.get(v, key) ?? value.null()) ?? 0.0
+
+fn gb(v: Value, key: String) -> Bool =
+  value.as_bool(value.get(v, key) ?? value.null()) ?? false
+
+fn go(v: Value, key: String) -> Value =
+  value.get(v, key) ?? value.object([])
+
+fn ga(v: Value) -> List[Value] = value.as_array(v) ?? []
+
+fn is_err(r: Result[Value, String]) -> Bool = match r {
+  ok(_) => false,
+  err(_) => true,
+}
+
+// ═══════════════════════════════════════════════════════
+// Scalars
+// ═══════════════════════════════════════════════════════
+
+test "string value" {
+  let v = unwrap(yaml.parse("name: Alice"))
+  assert_eq(gs(v, "name"), "Alice")
+}
+
+test "integer value" {
+  let v = unwrap(yaml.parse("port: 8080"))
+  assert_eq(gi(v, "port"), 8080)
+}
+
+test "float value" {
+  let v = unwrap(yaml.parse("pi: 3.14"))
+  assert_eq(gf(v, "pi"), 3.14)
+}
+
+test "boolean true" {
+  let v = unwrap(yaml.parse("debug: true"))
+  assert_eq(gb(v, "debug"), true)
+}
+
+test "boolean false" {
+  let v = unwrap(yaml.parse("debug: false"))
+  assert_eq(gb(v, "debug"), false)
+}
+
+test "null value" {
+  let v = unwrap(yaml.parse("x: null"))
+  assert_eq(gs(v, "x"), "")
+}
+
+test "tilde null" {
+  let v = unwrap(yaml.parse("x: ~"))
+  assert_eq(gs(v, "x"), "")
+}
+
+test "quoted string" {
+  let v = unwrap(yaml.parse('name: "Alice"'))
+  assert_eq(gs(v, "name"), "Alice")
+}
+
+test "single quoted string" {
+  let v = unwrap(yaml.parse("name: 'Alice'"))
+  assert_eq(gs(v, "name"), "Alice")
+}
+
+test "negative integer" {
+  let v = unwrap(yaml.parse("n: -42"))
+  assert_eq(gi(v, "n"), -42)
+}
+
+// ═══════════════════════════════════════════════════════
+// Mappings
+// ═══════════════════════════════════════════════════════
+
+test "simple mapping" {
+  let v = unwrap(yaml.parse("host: localhost\nport: 3000"))
+  assert_eq(gs(v, "host"), "localhost")
+  assert_eq(gi(v, "port"), 3000)
+}
+
+test "nested mapping" {
+  let v = unwrap(yaml.parse("server:\n  host: localhost\n  port: 8080"))
+  let srv = go(v, "server")
+  assert_eq(gs(srv, "host"), "localhost")
+  assert_eq(gi(srv, "port"), 8080)
+}
+
+test "deeply nested" {
+  let v = unwrap(yaml.parse("a:\n  b:\n    c: deep"))
+  assert_eq(gs(go(go(v, "a"), "b"), "c"), "deep")
+}
+
+test "multiple top-level keys" {
+  let v = unwrap(yaml.parse("name: app\nversion: 1\ndebug: true"))
+  assert_eq(gs(v, "name"), "app")
+  assert_eq(gi(v, "version"), 1)
+  assert_eq(gb(v, "debug"), true)
+}
+
+// ═══════════════════════════════════════════════════════
+// Sequences
+// ═══════════════════════════════════════════════════════
+
+test "simple sequence" {
+  let v = unwrap(yaml.parse("- a\n- b\n- c"))
+  assert_eq(list.len(ga(v)), 3)
+}
+
+test "sequence of integers" {
+  let v = unwrap(yaml.parse("- 1\n- 2\n- 3"))
+  let items = ga(v)
+  assert_eq(value.as_int(list.get(items, 0) ?? value.null()) ?? 0, 1)
+  assert_eq(value.as_int(list.get(items, 2) ?? value.null()) ?? 0, 3)
+}
+
+test "sequence as value" {
+  let v = unwrap(yaml.parse("tags:\n  - web\n  - api"))
+  let tags = ga(go(v, "tags"))
+  assert_eq(list.len(tags), 2)
+}
+
+test "sequence of mappings" {
+  let text = "items:\n  - name: A\n    count: 1\n  - name: B\n    count: 2"
+  let v = unwrap(yaml.parse(text))
+  let items = ga(go(v, "items"))
+  assert_eq(list.len(items), 2)
+}
+
+// ═══════════════════════════════════════════════════════
+// Flow collections
+// ═══════════════════════════════════════════════════════
+
+test "flow sequence" {
+  let v = unwrap(yaml.parse("tags: [a, b, c]"))
+  assert_eq(list.len(ga(go(v, "tags"))), 3)
+}
+
+test "flow mapping" {
+  let v = unwrap(yaml.parse("point: {x: 1, y: 2}"))
+  let pt = go(v, "point")
+  assert_eq(gi(pt, "x"), 1)
+  assert_eq(gi(pt, "y"), 2)
+}
+
+test "empty flow sequence" {
+  let v = unwrap(yaml.parse("items: []"))
+  assert_eq(list.len(ga(go(v, "items"))), 0)
+}
+
+test "empty flow mapping" {
+  let v = unwrap(yaml.parse("meta: {}"))
+  assert_eq(list.len(json.keys(go(v, "meta"))), 0)
+}
+
+// ═══════════════════════════════════════════════════════
+// Comments & whitespace
+// ═══════════════════════════════════════════════════════
+
+test "inline comment" {
+  let v = unwrap(yaml.parse("name: Alice # the user"))
+  assert_eq(gs(v, "name"), "Alice")
+}
+
+test "comment-only lines" {
+  let v = unwrap(yaml.parse("# header\nname: Bob\n# footer"))
+  assert_eq(gs(v, "name"), "Bob")
+}
+
+test "empty input" {
+  let v = unwrap(yaml.parse(""))
+  assert_eq(value.stringify(v), "null")
+}
+
+test "blank lines between entries" {
+  let v = unwrap(yaml.parse("a: 1\n\nb: 2"))
+  assert_eq(gi(v, "a"), 1)
+  assert_eq(gi(v, "b"), 2)
+}
+
+// ═══════════════════════════════════════════════════════
+// Stringify
+// ═══════════════════════════════════════════════════════
+
+test "stringify simple mapping" {
+  let obj = value.object([("name", value.str("test")), ("port", value.int(80))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "name: test"))
+  assert(string.contains(text, "port: 80"))
+}
+
+test "stringify sequence" {
+  let arr = value.array([value.str("a"), value.str("b")])
+  let text = yaml.stringify(arr)
+  assert(string.contains(text, "- a"))
+  assert(string.contains(text, "- b"))
+}
+
+test "stringify boolean" {
+  let obj = value.object([("debug", value.bool(true))])
+  assert(string.contains(yaml.stringify(obj), "debug: true"))
+}
+
+test "stringify empty" {
+  assert_eq(yaml.stringify(value.object([])), "{}")
+}
+
+test "stringify empty array" {
+  assert_eq(yaml.stringify(value.array([])), "[]")
+}
+
+// ═══════════════════════════════════════════════════════
+// Roundtrip
+// ═══════════════════════════════════════════════════════
+
+test "roundtrip simple" {
+  let obj = value.object([("host", value.str("localhost")), ("port", value.int(8080))])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(v, "host"), "localhost")
+  assert_eq(gi(v, "port"), 8080)
+}
+
+// ═══════════════════════════════════════════════════════
+// Codec
+// ═══════════════════════════════════════════════════════
+
+type Config: Codec = { host: String, port: Int, debug: Bool }
+
+test "codec encode" {
+  let cfg = Config { host: "0.0.0.0", port: 3000, debug: true }
+  let text = yaml.encode(cfg)
+  assert(string.contains(text, "host:"))
+  assert(string.contains(text, "0.0.0.0"))
+  assert(string.contains(text, "port: 3000"))
+}
+
+test "codec roundtrip" {
+  let cfg = Config { host: "db.local", port: 5432, debug: false }
+  let text = yaml.encode(cfg)
+  match yaml.parse(text) {
+    ok(v) => match Config.decode(v) {
+      ok(c) => {
+        assert_eq(c.host, "db.local")
+        assert_eq(c.port, 5432)
+        assert_eq(c.debug, false)
+      },
+      err(e) => assert(false, "decode: ${e}"),
+    },
+    err(e) => assert(false, "parse: ${e}"),
+  }
+}
