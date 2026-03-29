@@ -23,13 +23,15 @@ fn go(v: Value, key: String) -> Value =
 
 fn ga(v: Value) -> List[Value] = value.as_array(v) ?? []
 
+fn s(v: Value) -> String = value.as_string(v) ?? ""
+
 fn is_err(r: Result[Value, String]) -> Bool = match r {
   ok(_) => false,
   err(_) => true,
 }
 
 // ═══════════════════════════════════════════════════════
-// Scalars
+// Scalars: basic types
 // ═══════════════════════════════════════════════════════
 
 test "string value" {
@@ -37,49 +39,112 @@ test "string value" {
   assert_eq(gs(v, "name"), "Alice")
 }
 
-test "integer value" {
+test "integer" {
   let v = unwrap(yaml.parse("port: 8080"))
   assert_eq(gi(v, "port"), 8080)
-}
-
-test "float value" {
-  let v = unwrap(yaml.parse("pi: 3.14"))
-  assert_eq(gf(v, "pi"), 3.14)
-}
-
-test "boolean true" {
-  let v = unwrap(yaml.parse("debug: true"))
-  assert_eq(gb(v, "debug"), true)
-}
-
-test "boolean false" {
-  let v = unwrap(yaml.parse("debug: false"))
-  assert_eq(gb(v, "debug"), false)
-}
-
-test "null value" {
-  let v = unwrap(yaml.parse("x: null"))
-  assert_eq(gs(v, "x"), "")
-}
-
-test "tilde null" {
-  let v = unwrap(yaml.parse("x: ~"))
-  assert_eq(gs(v, "x"), "")
-}
-
-test "quoted string" {
-  let v = unwrap(yaml.parse('name: "Alice"'))
-  assert_eq(gs(v, "name"), "Alice")
-}
-
-test "single quoted string" {
-  let v = unwrap(yaml.parse("name: 'Alice'"))
-  assert_eq(gs(v, "name"), "Alice")
 }
 
 test "negative integer" {
   let v = unwrap(yaml.parse("n: -42"))
   assert_eq(gi(v, "n"), -42)
+}
+
+test "zero" {
+  let v = unwrap(yaml.parse("n: 0"))
+  assert_eq(gi(v, "n"), 0)
+}
+
+test "float" {
+  let v = unwrap(yaml.parse("pi: 3.14"))
+  assert_eq(gf(v, "pi"), 3.14)
+}
+
+test "negative float" {
+  let v = unwrap(yaml.parse("f: -0.5"))
+  assert_eq(gf(v, "f"), -0.5)
+}
+
+test "boolean true" {
+  assert_eq(gb(unwrap(yaml.parse("x: true")), "x"), true)
+}
+
+test "boolean false" {
+  assert_eq(gb(unwrap(yaml.parse("x: false")), "x"), false)
+}
+
+// yaml.v3 compatible: yes/no/on/off
+test "boolean yes" {
+  assert_eq(gb(unwrap(yaml.parse("x: yes")), "x"), true)
+}
+
+test "boolean no" {
+  assert_eq(gb(unwrap(yaml.parse("x: no")), "x"), false)
+}
+
+test "boolean on" {
+  assert_eq(gb(unwrap(yaml.parse("x: on")), "x"), true)
+}
+
+test "boolean off" {
+  assert_eq(gb(unwrap(yaml.parse("x: off")), "x"), false)
+}
+
+test "boolean Yes" {
+  assert_eq(gb(unwrap(yaml.parse("x: Yes")), "x"), true)
+}
+
+test "boolean No" {
+  assert_eq(gb(unwrap(yaml.parse("x: No")), "x"), false)
+}
+
+test "boolean TRUE" {
+  assert_eq(gb(unwrap(yaml.parse("x: TRUE")), "x"), true)
+}
+
+test "boolean FALSE" {
+  assert_eq(gb(unwrap(yaml.parse("x: FALSE")), "x"), false)
+}
+
+// Null variants
+test "null" {
+  assert_eq(gs(unwrap(yaml.parse("x: null")), "x"), "")
+}
+
+test "tilde null" {
+  assert_eq(gs(unwrap(yaml.parse("x: ~")), "x"), "")
+}
+
+test "Null" {
+  assert_eq(gs(unwrap(yaml.parse("x: Null")), "x"), "")
+}
+
+test "NULL" {
+  assert_eq(gs(unwrap(yaml.parse("x: NULL")), "x"), "")
+}
+
+test "empty value is null" {
+  assert_eq(gs(unwrap(yaml.parse("x:")), "x"), "")
+}
+
+// Quoted strings
+test "double quoted" {
+  assert_eq(gs(unwrap(yaml.parse('name: "Alice"')), "name"), "Alice")
+}
+
+test "single quoted" {
+  assert_eq(gs(unwrap(yaml.parse("name: 'Alice'")), "name"), "Alice")
+}
+
+test "double quoted with escapes" {
+  assert_eq(gs(unwrap(yaml.parse("s: \"hello\\nworld\"")), "s"), "hello\nworld")
+}
+
+test "string that looks like number stays string when quoted" {
+  assert_eq(gs(unwrap(yaml.parse('v: "123"')), "v"), "123")
+}
+
+test "string that looks like bool stays string when quoted" {
+  assert_eq(gs(unwrap(yaml.parse('v: "true"')), "v"), "true")
 }
 
 // ═══════════════════════════════════════════════════════
@@ -111,6 +176,11 @@ test "multiple top-level keys" {
   assert_eq(gb(v, "debug"), true)
 }
 
+test "empty value mapping" {
+  let v = unwrap(yaml.parse("a:\nb: 2"))
+  assert_eq(gi(v, "b"), 2)
+}
+
 // ═══════════════════════════════════════════════════════
 // Sequences
 // ═══════════════════════════════════════════════════════
@@ -131,6 +201,7 @@ test "sequence as value" {
   let v = unwrap(yaml.parse("tags:\n  - web\n  - api"))
   let tags = ga(go(v, "tags"))
   assert_eq(list.len(tags), 2)
+  assert_eq(s(list.get(tags, 0) ?? value.null()), "web")
 }
 
 test "sequence of mappings" {
@@ -138,6 +209,26 @@ test "sequence of mappings" {
   let v = unwrap(yaml.parse(text))
   let items = ga(go(v, "items"))
   assert_eq(list.len(items), 2)
+  assert_eq(gs(list.get(items, 0) ?? value.object([]), "name"), "A")
+  assert_eq(gi(list.get(items, 0) ?? value.object([]), "count"), 1)
+  assert_eq(gs(list.get(items, 1) ?? value.object([]), "name"), "B")
+  assert_eq(gi(list.get(items, 1) ?? value.object([]), "count"), 2)
+}
+
+test "top-level sequence of mappings" {
+  let text = "- name: A\n  age: 1\n- name: B\n  age: 2"
+  let v = unwrap(yaml.parse(text))
+  let items = ga(v)
+  assert_eq(list.len(items), 2)
+  assert_eq(gs(list.get(items, 0) ?? value.object([]), "name"), "A")
+  assert_eq(gi(list.get(items, 1) ?? value.object([]), "age"), 2)
+}
+
+test "nested sequence in sequence" {
+  let text = "- - 1\n  - 2\n- - 3\n  - 4"
+  let v = unwrap(yaml.parse(text))
+  let outer = ga(v)
+  assert_eq(list.len(outer), 2)
 }
 
 // ═══════════════════════════════════════════════════════
@@ -157,13 +248,70 @@ test "flow mapping" {
 }
 
 test "empty flow sequence" {
-  let v = unwrap(yaml.parse("items: []"))
-  assert_eq(list.len(ga(go(v, "items"))), 0)
+  assert_eq(list.len(ga(go(unwrap(yaml.parse("items: []")), "items"))), 0)
 }
 
 test "empty flow mapping" {
-  let v = unwrap(yaml.parse("meta: {}"))
-  assert_eq(list.len(json.keys(go(v, "meta"))), 0)
+  assert_eq(list.len(json.keys(go(unwrap(yaml.parse("meta: {}")), "meta"))), 0)
+}
+
+test "flow sequence of numbers" {
+  let v = unwrap(yaml.parse("nums: [1, 2, 3]"))
+  let items = ga(go(v, "nums"))
+  assert_eq(value.as_int(list.get(items, 0) ?? value.null()) ?? 0, 1)
+}
+
+test "flow with quoted strings" {
+  let v = unwrap(yaml.parse('tags: ["hello world", "foo bar"]'))
+  let items = ga(go(v, "tags"))
+  assert_eq(s(list.get(items, 0) ?? value.null()), "hello world")
+}
+
+// ═══════════════════════════════════════════════════════
+// Block scalars (| and >)
+// ═══════════════════════════════════════════════════════
+
+test "literal block scalar" {
+  let text = "desc: |\n  line1\n  line2\n  line3"
+  let v = unwrap(yaml.parse(text))
+  let d = gs(v, "desc")
+  assert(string.contains(d, "line1"))
+  assert(string.contains(d, "line2"))
+  assert(string.contains(d, "\n"))
+}
+
+test "folded block scalar" {
+  let text = "desc: >\n  line1\n  line2\n  line3"
+  let v = unwrap(yaml.parse(text))
+  let d = gs(v, "desc")
+  assert(string.contains(d, "line1"))
+  assert(string.contains(d, "line2"))
+}
+
+test "literal block preserves newlines" {
+  let text = "data: |\n  first\n  second"
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(v, "data"), "first\nsecond\n")
+}
+
+test "folded block joins lines" {
+  let text = "data: >\n  first\n  second"
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(v, "data"), "first second\n")
+}
+
+// ═══════════════════════════════════════════════════════
+// Document separator
+// ═══════════════════════════════════════════════════════
+
+test "document with ---" {
+  let v = unwrap(yaml.parse("---\nname: Alice"))
+  assert_eq(gs(v, "name"), "Alice")
+}
+
+test "document with --- and ..." {
+  let v = unwrap(yaml.parse("---\nname: Alice\n..."))
+  assert_eq(gs(v, "name"), "Alice")
 }
 
 // ═══════════════════════════════════════════════════════
@@ -171,18 +319,15 @@ test "empty flow mapping" {
 // ═══════════════════════════════════════════════════════
 
 test "inline comment" {
-  let v = unwrap(yaml.parse("name: Alice # the user"))
-  assert_eq(gs(v, "name"), "Alice")
+  assert_eq(gs(unwrap(yaml.parse("name: Alice # the user")), "name"), "Alice")
 }
 
 test "comment-only lines" {
-  let v = unwrap(yaml.parse("# header\nname: Bob\n# footer"))
-  assert_eq(gs(v, "name"), "Bob")
+  assert_eq(gs(unwrap(yaml.parse("# header\nname: Bob\n# footer")), "name"), "Bob")
 }
 
 test "empty input" {
-  let v = unwrap(yaml.parse(""))
-  assert_eq(value.stringify(v), "null")
+  assert_eq(value.stringify(unwrap(yaml.parse(""))), "null")
 }
 
 test "blank lines between entries" {
@@ -191,11 +336,16 @@ test "blank lines between entries" {
   assert_eq(gi(v, "b"), 2)
 }
 
+test "trailing whitespace" {
+  let v = unwrap(yaml.parse("name: Alice   "))
+  assert_eq(gs(v, "name"), "Alice")
+}
+
 // ═══════════════════════════════════════════════════════
 // Stringify
 // ═══════════════════════════════════════════════════════
 
-test "stringify simple mapping" {
+test "stringify mapping" {
   let obj = value.object([("name", value.str("test")), ("port", value.int(80))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "name: test"))
@@ -209,12 +359,22 @@ test "stringify sequence" {
   assert(string.contains(text, "- b"))
 }
 
-test "stringify boolean" {
-  let obj = value.object([("debug", value.bool(true))])
-  assert(string.contains(yaml.stringify(obj), "debug: true"))
+test "stringify nested" {
+  let obj = value.object([("server", value.object([("host", value.str("localhost"))]))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "server:"))
+  assert(string.contains(text, "  host: localhost"))
 }
 
-test "stringify empty" {
+test "stringify boolean" {
+  assert(string.contains(yaml.stringify(value.object([("d", value.bool(true))])), "d: true"))
+}
+
+test "stringify null" {
+  assert(string.contains(yaml.stringify(value.object([("x", value.null())])), "x: null"))
+}
+
+test "stringify empty mapping" {
   assert_eq(yaml.stringify(value.object([])), "{}")
 }
 
@@ -222,11 +382,17 @@ test "stringify empty array" {
   assert_eq(yaml.stringify(value.array([])), "[]")
 }
 
+test "stringify special strings" {
+  let obj = value.object([("v", value.str("true"))])
+  let text = yaml.stringify(obj)
+  assert(string.contains(text, "\"true\""))
+}
+
 // ═══════════════════════════════════════════════════════
 // Roundtrip
 // ═══════════════════════════════════════════════════════
 
-test "roundtrip simple" {
+test "roundtrip mapping" {
   let obj = value.object([("host", value.str("localhost")), ("port", value.int(8080))])
   let text = yaml.stringify(obj)
   let v = unwrap(yaml.parse(text))
@@ -234,11 +400,30 @@ test "roundtrip simple" {
   assert_eq(gi(v, "port"), 8080)
 }
 
+test "roundtrip nested" {
+  let obj = value.object([
+    ("db", value.object([("host", value.str("pg")), ("port", value.int(5432))])),
+  ])
+  let text = yaml.stringify(obj)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(go(v, "db"), "host"), "pg")
+  assert_eq(gi(go(v, "db"), "port"), 5432)
+}
+
+test "roundtrip sequence" {
+  let arr = value.array([value.str("x"), value.str("y")])
+  let text = yaml.stringify(arr)
+  let v = unwrap(yaml.parse(text))
+  assert_eq(list.len(ga(v)), 2)
+}
+
 // ═══════════════════════════════════════════════════════
 // Codec
 // ═══════════════════════════════════════════════════════
 
 type Config: Codec = { host: String, port: Int, debug: Bool }
+type Nested: Codec = { db: DbConf }
+type DbConf: Codec = { host: String, port: Int }
 
 test "codec encode" {
   let cfg = Config { host: "0.0.0.0", port: 3000, debug: true }
@@ -262,4 +447,93 @@ test "codec roundtrip" {
     },
     err(e) => assert(false, "parse: ${e}"),
   }
+}
+
+test "codec nested roundtrip" {
+  let cfg = Nested { db: DbConf { host: "pg.local", port: 5432 } }
+  let text = yaml.encode(cfg)
+  match yaml.parse(text) {
+    ok(v) => match Nested.decode(v) {
+      ok(c) => {
+        assert_eq(c.db.host, "pg.local")
+        assert_eq(c.db.port, 5432)
+      },
+      err(e) => assert(false, "decode: ${e}"),
+    },
+    err(e) => assert(false, "parse: ${e}"),
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// Real-world YAML (yaml.v3 compatible)
+// ═══════════════════════════════════════════════════════
+
+test "docker-compose style" {
+  let text = """
+    version: '3'
+    services:
+      web:
+        image: nginx
+        ports:
+          - 80
+          - 443
+      db:
+        image: postgres
+        environment:
+          POSTGRES_DB: mydb
+    """
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(v, "version"), "3")
+  let web = go(go(v, "services"), "web")
+  assert_eq(gs(web, "image"), "nginx")
+  let ports = ga(go(web, "ports"))
+  assert_eq(list.len(ports), 2)
+  let db_env = go(go(go(v, "services"), "db"), "environment")
+  assert_eq(gs(db_env, "POSTGRES_DB"), "mydb")
+}
+
+test "github actions style" {
+  let text = """
+    name: CI
+    on: push
+    jobs:
+      build:
+        runs-on: ubuntu-latest
+        steps:
+          - name: Checkout
+            uses: actions/checkout@v4
+          - name: Build
+            run: cargo build
+    """
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(v, "name"), "CI")
+  let steps = ga(go(go(go(v, "jobs"), "build"), "steps"))
+  assert_eq(list.len(steps), 2)
+  assert_eq(gs(list.get(steps, 0) ?? value.object([]), "name"), "Checkout")
+}
+
+test "kubernetes pod style" {
+  let text = """
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: nginx
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+          ports:
+            - containerPort: 80
+    """
+  let v = unwrap(yaml.parse(text))
+  assert_eq(gs(v, "apiVersion"), "v1")
+  assert_eq(gs(v, "kind"), "Pod")
+  assert_eq(gs(go(v, "metadata"), "name"), "nginx")
+  assert_eq(gs(go(go(v, "metadata"), "labels"), "app"), "web")
+  let containers = ga(go(go(v, "spec"), "containers"))
+  assert_eq(list.len(containers), 1)
+  let c = list.get(containers, 0) ?? value.object([])
+  assert_eq(gs(c, "image"), "nginx:1.25")
 }
