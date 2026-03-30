@@ -5,6 +5,8 @@
 //   mappings, sequences, block scalars (| >), flow collections,
 //   boolean variants (yes/no/on/off), document separators (---/...).
 
+import json
+
 // ── Public API ──────────────────────────────────────
 
 effect fn parse(text: String) -> Result[Value, String] = {
