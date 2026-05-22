@@ -1,7 +1,5 @@
 import json
 
-// ── Public API ──────────────────────────────────────
-
 effect fn parse(text: String) -> Value = {
   let lines = string.replace(text, "\r\n", "\n")
     |> string.lines
@@ -12,411 +10,280 @@ effect fn parse(text: String) -> Value = {
 
 fn stringify(v: Value) -> String = emit(v, 0)
 
-// ── Comment handling ────────────────────────────────
-
 local fn trim_comment(line: String) -> String =
-  match find_hash(line, 0, false) {
-    some(p) => string.trim_end(string.slice(line, 0, p)),
-    none => line,
-  }
-
-local fn find_hash(line: String, pos: Int, in_q: Bool) -> Option[Int] = {
-  if pos >= string.len(line) then none
-  else {
-    let c = string.get(line, pos) ?? ""
-    if in_q then {
-      if c == "'" or c == "\"" then find_hash(line, pos + 1, false)
-      else find_hash(line, pos + 1, true)
-    } else {
-      if c == "#" and (pos == 0 or (string.get(line, pos - 1) ?? "") == " ") then some(pos)
-      else if c == "'" or c == "\"" then find_hash(line, pos + 1, true)
-      else find_hash(line, pos + 1, false)
-    }
-  }
-}
-
-// ── Utility ─────────────────────────────────────────
-
-local fn indent_of(line: String) -> Int =
-  string.len(line) - string.len(string.trim_start(line))
-
-local fn is_blank(line: String) -> Bool = {
-  let t = string.trim(line)
-  string.is_empty(t) or string.starts_with(t, "#")
-}
-
-// ── Top-level dispatch ──────────────────────────────
-
-local effect fn parse_lines(lines: List[String]) -> Value = {
-  let first = lines |> list.enumerate |> list.find((e) => { let (_, l) = e; not is_blank(l) })
-  match first {
-    none => value.null(),
-    some(entry) => {
-      let (idx, line) = entry
-      let t = string.trim(line)
-      if string.starts_with(t, "- ") or t == "-" then {
-        let (v, _) = parse_sequence(lines, idx, indent_of(line))!
-        v
-      } else if string.starts_with(t, "[") then parse_flow_sequence(t)
-      else if string.starts_with(t, "{") then parse_flow_mapping(t)
-      else {
-        let (v, _) = parse_mapping(lines, idx, indent_of(line))!
-        v
-      }
-    },
-  }
-}
-
-// ── Mapping parser ──────────────────────────────────
-
-local effect fn parse_mapping(lines: List[String], start: Int, base: Int) -> (Value, Int) =
-  collect_map(lines, start, base, [])!
-
-local effect fn collect_map(lines: List[String], pos: Int, base: Int, pairs: List[(String, Value)]) -> (Value, Int) = {
-  if pos >= list.len(lines) then (value.object(pairs), pos)
-  else {
-    let line = list.get(lines, pos) ?? ""
-    if is_blank(line) then collect_map(lines, pos + 1, base, pairs)!
-    else if indent_of(line) != base then (value.object(pairs), pos)
-    else {
-      let t = string.trim(line)
-      match find_colon(t) {
-        none => (value.object(pairs), pos),
-        some(cp) => {
-          let key = unquote(string.trim(string.slice(t, 0, cp)))
-          let after = string.trim(string.drop(t, cp + 1))
-          let (val, next) = parse_value_after_colon(lines, pos, base, after)!
-          collect_map(lines, next, base, pairs + [(key, val)])!
-        },
-      }
-    }
-  }
-}
-
-local effect fn parse_value_after_colon(lines: List[String], pos: Int, base: Int, after: String) -> (Value, Int) =
-  if after == "|" or after == ">" or after == "|+" or after == "|-" or after == ">+" or after == ">-" then
-    parse_block_scalar(lines, pos + 1, base, after)
-  else if string.len(after) > 0 then
-    (parse_inline_value(after), pos + 1)
-  else
-    parse_nested_value(lines, pos + 1, base)!
-
-// ── Key utilities ───────────────────────────────────
-
-local fn unquote(s: String) -> String =
-  if string.len(s) >= 2 and string.starts_with(s, "'") and string.ends_with(s, "'") then
-    string.slice(s, 1, string.len(s) - 1)
-  else if string.len(s) >= 2 and string.starts_with(s, "\"") and string.ends_with(s, "\"") then
-    unescape(string.slice(s, 1, string.len(s) - 1))
-  else s
-
-local fn find_colon(s: String) -> Option[Int] = find_colon_rec(s, 0, false)
-
-local fn find_colon_rec(s: String, pos: Int, in_q: Bool) -> Option[Int] = {
+  match scan_quote(line, 0, false) { some(p) => string.trim_end(string.slice(line, 0, p)), none => line }
+local fn indent_of(l: String) -> Int = string.len(l) - string.len(string.trim_start(l))
+local fn is_blank(l: String) -> Bool = { let t = string.trim(l); string.is_empty(t) or string.starts_with(t, "#") }
+local fn is_seq_start(t: String) -> Bool = string.starts_with(t, "- ") or t == "-"
+local fn is_null_str(s: String) -> Bool = s == "null" or s == "Null" or s == "NULL" or s == "~" or s == ""
+local fn is_bool_true(l: String) -> Bool = l == "true" or l == "yes" or l == "on"
+local fn is_bool_false(l: String) -> Bool = l == "false" or l == "no" or l == "off"
+local fn is_quoted(s: String, q: String) -> Bool = string.len(s) >= 2 and string.starts_with(s, q) and string.ends_with(s, q)
+local fn is_block_ind(s: String) -> Bool = s == "|" or s == ">" or s == "|+" or s == "|-" or s == ">+" or s == ">-"
+local fn line_at(lines: List[String], i: Int) -> String = list.get(lines, i) ?? ""
+local fn scan_quote(s: String, pos: Int, in_q: Bool) -> Option[Int] =
   if pos >= string.len(s) then none
   else {
     let c = string.get(s, pos) ?? ""
-    if in_q then {
-      if c == "'" or c == "\"" then find_colon_rec(s, pos + 1, false)
-      else find_colon_rec(s, pos + 1, true)
-    } else {
-      if c == ":" and ((string.get(s, pos + 1) ?? "") == " " or pos + 1 >= string.len(s)) then some(pos)
-      else if c == "'" or c == "\"" then find_colon_rec(s, pos + 1, true)
-      else find_colon_rec(s, pos + 1, false)
-    }
+    if in_q then scan_quote(s, pos + 1, not (c == "'" or c == "\""))
+    else if c == "#" and (pos == 0 or (string.get(s, pos - 1) ?? "") == " ") then some(pos)
+    else scan_quote(s, pos + 1, c == "'" or c == "\"")
+  }
+local fn find_colon(s: String) -> Option[Int] = find_colon_at(s, 0, false)
+local fn find_colon_at(s: String, pos: Int, in_q: Bool) -> Option[Int] =
+  if pos >= string.len(s) then none
+  else {
+    let c = string.get(s, pos) ?? ""
+    if in_q then find_colon_at(s, pos + 1, not (c == "'" or c == "\""))
+    else if c == ":" and ((string.get(s, pos + 1) ?? "") == " " or pos + 1 >= string.len(s)) then some(pos)
+    else find_colon_at(s, pos + 1, c == "'" or c == "\"")
+  }
+
+local effect fn parse_lines(lines: List[String]) -> Value = {
+  let first = lines |> list.enumerate |> list.find((e) => not is_blank(e.1))
+  match first {
+    none => value.null(),
+    some((idx, line)) => { let (v, _) = dispatch(lines, idx, line)!; v },
   }
 }
+local effect fn dispatch(lines: List[String], idx: Int, line: String) -> (Value, Int) = {
+  let t = string.trim(line)
+  let ind = indent_of(line)
+  if is_seq_start(t) then parse_sequence(lines, idx, ind)!
+  else if string.starts_with(t, "[") then (parse_flow_seq(t), idx + 1)
+  else if string.starts_with(t, "{") then (parse_flow_map(t), idx + 1)
+  else parse_mapping(lines, idx, ind)!
+}
 
-local fn has_colon(s: String) -> Bool = match find_colon(s) { some(_) => true, none => false }
-
-// ── Sequence parser ─────────────────────────────────
+local effect fn parse_mapping(lines: List[String], start: Int, base: Int) -> (Value, Int) =
+  collect_map(lines, start, base, [])!
+local effect fn collect_map(lines: List[String], pos: Int, base: Int, pairs: List[(String, Value)]) -> (Value, Int) =
+  if pos >= list.len(lines) then (value.object(pairs), pos)
+  else {
+    let line = line_at(lines, pos)
+    if is_blank(line) then collect_map(lines, pos + 1, base, pairs)!
+    else if indent_of(line) != base then (value.object(pairs), pos)
+    else map_entry(lines, pos, base, pairs, string.trim(line))!
+  }
+local effect fn map_entry(lines: List[String], pos: Int, base: Int, pairs: List[(String, Value)], t: String) -> (Value, Int) =
+  match find_colon(t) {
+    none => (value.object(pairs), pos),
+    some(cp) => {
+      let key = unquote(string.trim(string.slice(t, 0, cp)))
+      let after = string.trim(string.drop(t, cp + 1))
+      let (val, next) = after_colon(lines, pos, base, after)!
+      collect_map(lines, next, base, pairs + [(key, val)])!
+    },
+  }
+local effect fn after_colon(lines: List[String], pos: Int, base: Int, after: String) -> (Value, Int) =
+  if is_block_ind(after) then block_scalar(lines, pos + 1, base, after)
+  else if string.len(after) > 0 then (parse_inline(after), pos + 1)
+  else parse_nested(lines, pos + 1, base)!
+local fn unquote(s: String) -> String =
+  if is_quoted(s, "'") then string.slice(s, 1, string.len(s) - 1)
+  else if is_quoted(s, "\"") then unescape(string.slice(s, 1, string.len(s) - 1))
+  else s
 
 local effect fn parse_sequence(lines: List[String], start: Int, base: Int) -> (Value, Int) =
   collect_seq(lines, start, base, [])!
-
-local effect fn collect_seq(lines: List[String], pos: Int, base: Int, items: List[Value]) -> (Value, Int) = {
+local effect fn collect_seq(lines: List[String], pos: Int, base: Int, items: List[Value]) -> (Value, Int) =
   if pos >= list.len(lines) then (value.array(items), pos)
   else {
-    let line = list.get(lines, pos) ?? ""
+    let line = line_at(lines, pos)
     if is_blank(line) then collect_seq(lines, pos + 1, base, items)!
     else if indent_of(line) != base then (value.array(items), pos)
-    else {
-      let t = string.trim(line)
-      if string.starts_with(t, "- ") then {
-        let after = string.trim(string.drop(t, 2))
-        if string.len(after) == 0 then {
-          let (val, next) = parse_nested_value(lines, pos + 1, base)!
-          collect_seq(lines, next, base, items + [val])!
-        } else if string.starts_with(after, "- ") or after == "-" then {
-          let (val, next) = parse_nested_seq(lines, pos, base)!
-          collect_seq(lines, next, base, items + [val])!
-        } else if has_colon(after) then {
-          let (val, next) = parse_seq_map(lines, pos, base)!
-          collect_seq(lines, next, base, items + [val])!
-        } else {
-          let val = parse_inline_value(after)
-          collect_seq(lines, pos + 1, base, items + [val])!
-        }
-      } else if t == "-" then {
-        let (val, next) = parse_nested_value(lines, pos + 1, base)!
-        collect_seq(lines, next, base, items + [val])!
-      } else (value.array(items), pos)
-    }
+    else seq_item(lines, pos, base, items, string.trim(line))!
   }
+local effect fn seq_item(lines: List[String], pos: Int, base: Int, items: List[Value], t: String) -> (Value, Int) =
+  if not is_seq_start(t) then (value.array(items), pos)
+  else { let (val, next) = dash_item(lines, pos, base, t)!; collect_seq(lines, next, base, items + [val])! }
+local effect fn dash_item(lines: List[String], pos: Int, base: Int, t: String) -> (Value, Int) =
+  if t == "-" then parse_nested(lines, pos + 1, base)!
+  else dash_after(lines, pos, base, string.trim(string.drop(t, 2)))!
+local effect fn dash_after(lines: List[String], pos: Int, base: Int, after: String) -> (Value, Int) =
+  if string.len(after) == 0 then parse_nested(lines, pos + 1, base)!
+  else if is_seq_start(after) then nested_seq(lines, pos, base)!
+  else if match find_colon(after) { some(_) => true, none => false } then seq_map(lines, pos, base)!
+  else (parse_inline(after), pos + 1)
+local effect fn seq_map(lines: List[String], dp: Int, sb: Int) -> (Value, Int) = {
+  let after = string.trim(string.drop(string.trim(line_at(lines, dp)), 2))
+  parse_mapping(list.set(lines, dp, string.repeat(" ", sb + 2) + after), dp, sb + 2)!
+}
+local effect fn nested_seq(lines: List[String], dp: Int, sb: Int) -> (Value, Int) = {
+  let after = string.drop(string.trim(line_at(lines, dp)), 2)
+  parse_sequence(list.set(lines, dp, string.repeat(" ", sb + 2) + after), dp, sb + 2)!
 }
 
-local effect fn parse_seq_map(lines: List[String], dash_pos: Int, seq_base: Int) -> (Value, Int) = {
-  let dash_line = list.get(lines, dash_pos) ?? ""
-  let after = string.trim(string.drop(string.trim(dash_line), 2))
-  let indent = seq_base + 2
-  let patched = list.set(lines, dash_pos, string.repeat(" ", indent) + after)
-  parse_mapping(patched, dash_pos, indent)!
-}
-
-local effect fn parse_nested_seq(lines: List[String], dash_pos: Int, seq_base: Int) -> (Value, Int) = {
-  let dash_line = list.get(lines, dash_pos) ?? ""
-  let after = string.drop(string.trim(dash_line), 2)
-  let indent = seq_base + 2
-  let patched = list.set(lines, dash_pos, string.repeat(" ", indent) + after)
-  parse_sequence(patched, dash_pos, indent)!
-}
-
-// ── Nested value ────────────────────────────────────
-
-local effect fn parse_nested_value(lines: List[String], pos: Int, parent: Int) -> (Value, Int) = {
-  let next = lines |> list.drop(pos) |> list.enumerate |> list.find((e) => { let (_, l) = e; not is_blank(l) })
+local effect fn parse_nested(lines: List[String], pos: Int, parent: Int) -> (Value, Int) = {
+  let next = lines |> list.drop(pos) |> list.enumerate |> list.find((e) => not is_blank(e.1))
   match next {
     none => (value.null(), list.len(lines)),
-    some(entry) => {
-      let (offset, line) = entry
-      let actual = pos + offset
-      let ci = indent_of(line)
-      let t = string.trim(line)
-      if ci < parent then (value.null(), actual)
-      else if ci == parent then {
-        if string.starts_with(t, "- ") or t == "-" then parse_sequence(lines, actual, ci)!
-        else (value.null(), actual)
-      } else {
-        if string.starts_with(t, "- ") or t == "-" then parse_sequence(lines, actual, ci)!
-        else parse_mapping(lines, actual, ci)!
-      }
-    },
+    some((offset, line)) => nested_dispatch(lines, pos + offset, indent_of(line), string.trim(line), parent)!,
   }
 }
+local effect fn nested_dispatch(lines: List[String], pos: Int, ci: Int, t: String, parent: Int) -> (Value, Int) =
+  if ci < parent then (value.null(), pos)
+  else if is_seq_start(t) then parse_sequence(lines, pos, ci)!
+  else if ci == parent then (value.null(), pos)
+  else parse_mapping(lines, pos, ci)!
 
-// ── Block scalars (| and >) ─────────────────────────
-
-local fn parse_block_scalar(lines: List[String], start: Int, parent: Int, indicator: String) -> (Value, Int) = {
+local fn block_scalar(lines: List[String], start: Int, parent: Int, ind: String) -> (Value, Int) = {
   let (content, end) = collect_block(lines, start, parent, -1, [])
-  let is_literal = string.starts_with(indicator, "|")
-  let joined = if is_literal then content |> list.join("\n") else content |> list.join(" ")
-  let result = if string.ends_with(indicator, "-") then joined else joined + "\n"
-  (value.str(result), end)
+  let joined = if string.starts_with(ind, "|") then list.join(content, "\n") else list.join(content, " ")
+  (value.str(if string.ends_with(ind, "-") then joined else joined + "\n"), end)
 }
-
-local fn collect_block(lines: List[String], pos: Int, parent: Int, bi: Int, acc: List[String]) -> (List[String], Int) = {
+local fn collect_block(lines: List[String], pos: Int, parent: Int, bi: Int, acc: List[String]) -> (List[String], Int) =
   if pos >= list.len(lines) then (acc, pos)
-  else {
-    let line = list.get(lines, pos) ?? ""
-    if is_blank(line) then {
-      if list.is_empty(acc) then collect_block(lines, pos + 1, parent, bi, acc)
-      else collect_block(lines, pos + 1, parent, bi, acc + [""])
-    } else {
-      let ind = indent_of(line)
-      if ind <= parent then (acc, pos)
-      else {
-        let b = if bi < 0 then ind else bi
-        if ind < b then (acc, pos)
-        else collect_block(lines, pos + 1, parent, b, acc + [string.drop(line, b)])
-      }
-    }
-  }
+  else block_line(lines, pos, parent, bi, acc, line_at(lines, pos))
+local fn block_line(lines: List[String], pos: Int, parent: Int, bi: Int, acc: List[String], line: String) -> (List[String], Int) =
+  if is_blank(line) then collect_block(lines, pos + 1, parent, bi, if list.is_empty(acc) then acc else acc + [""])
+  else block_nonblank(lines, pos, parent, bi, acc, line, indent_of(line))
+local fn block_nonblank(lines: List[String], pos: Int, parent: Int, bi: Int, acc: List[String], line: String, ind: Int) -> (List[String], Int) = {
+  let b = if bi < 0 then ind else bi
+  if ind <= parent or ind < b then (acc, pos)
+  else collect_block(lines, pos + 1, parent, b, acc + [string.drop(line, b)])
 }
 
-// ── Inline value parser ─────────────────────────────
-
-local fn parse_inline_value(s: String) -> Value = {
+local fn parse_inline(s: String) -> Value = {
   let t = string.trim(s)
-  if string.starts_with(t, "[") then parse_flow_sequence(t)
-  else if string.starts_with(t, "{") then parse_flow_mapping(t)
+  if string.starts_with(t, "[") then parse_flow_seq(t)
+  else if string.starts_with(t, "{") then parse_flow_map(t)
   else parse_scalar(t)
 }
-
-// ── Scalar parser ───────────────────────────────────
-
-local fn parse_scalar(s: String) -> Value = {
-  let low = string.to_lower(s)
-  if s == "null" or s == "Null" or s == "NULL" or s == "~" or s == "" then value.null()
-  else if low == "true" or low == "yes" or low == "on" then value.bool(true)
-  else if low == "false" or low == "no" or low == "off" then value.bool(false)
-  else if string.len(s) >= 2 and string.starts_with(s, "'") and string.ends_with(s, "'") then
-    value.str(string.slice(s, 1, string.len(s) - 1))
-  else if string.len(s) >= 2 and string.starts_with(s, "\"") and string.ends_with(s, "\"") then
-    value.str(unescape(string.slice(s, 1, string.len(s) - 1)))
-  else if low == ".inf" or low == "+.inf" then value.float(1.0 / 0.0)
+local fn parse_scalar(s: String) -> Value =
+  if is_null_str(s) then value.null() else scalar_typed(s, string.to_lower(s))
+local fn scalar_typed(s: String, low: String) -> Value =
+  if is_bool_true(low) then value.bool(true)
+  else if is_bool_false(low) then value.bool(false)
+  else scalar_value(s, low)
+local fn scalar_value(s: String, low: String) -> Value =
+  if is_quoted(s, "'") then value.str(string.slice(s, 1, string.len(s) - 1))
+  else if is_quoted(s, "\"") then value.str(unescape(string.slice(s, 1, string.len(s) - 1)))
+  else scalar_numeric(s, low)
+local fn scalar_numeric(s: String, low: String) -> Value =
+  if low == ".inf" or low == "+.inf" then value.float(1.0 / 0.0)
   else if low == "-.inf" then value.float(-1.0 / 0.0)
   else if low == ".nan" then value.float(0.0 / 0.0)
-  else parse_number(s)
-}
+  else parse_number(string.replace(s, "_", ""), s)
 
-local fn parse_number(s: String) -> Value = {
-  let c = string.replace(s, "_", "")
+local fn parse_number(c: String, raw: String) -> Value =
   if string.starts_with(c, "0x") or string.starts_with(c, "0X") then
-    match int.from_hex(string.drop(c, 2)) { ok(n) => value.int(n), err(_) => value.str(s) }
-  else if string.starts_with(c, "0o") or string.starts_with(c, "0O") then
-    match parse_octal(string.drop(c, 2)) { ok(n) => value.int(n), err(_) => value.str(s) }
-  else if string.starts_with(c, "-0o") or string.starts_with(c, "-0O") then
-    match parse_octal(string.drop(c, 3)) { ok(n) => value.int(0 - n), err(_) => value.str(s) }
-  else if string.starts_with(c, "0b") or string.starts_with(c, "0B") then
-    match parse_binary(string.drop(c, 2)) { ok(n) => value.int(n), err(_) => value.str(s) }
-  else if string.starts_with(c, "-0b") or string.starts_with(c, "-0B") then
-    match parse_binary(string.drop(c, 3)) { ok(n) => value.int(0 - n), err(_) => value.str(s) }
-  else if string.len(c) > 1 and string.starts_with(c, "0") and not string.contains(c, ".") and not string.contains(c, "e") then
-    match parse_octal(string.drop(c, 1)) { ok(n) => value.int(n), err(_) => try_decimal(c, s) }
-  else if string.len(c) > 2 and string.starts_with(c, "-0") and not string.contains(c, ".") then
-    match parse_octal(string.drop(c, 2)) { ok(n) => value.int(0 - n), err(_) => try_decimal(c, s) }
-  else try_decimal(c, s)
+    match int.from_hex(string.drop(c, 2)) { ok(n) => value.int(n), err(_) => value.str(raw) }
+  else if has_prefix(c, "0o") or has_prefix(c, "0O") then num_signed_base(c, raw, "o")
+  else if has_prefix(c, "0b") or has_prefix(c, "0B") then num_signed_base(c, raw, "b")
+  else if is_legacy_oct(c) then num_legacy_oct(c, raw)
+  else try_decimal(c, raw)
+local fn has_prefix(c: String, p: String) -> Bool = string.starts_with(c, p) or string.starts_with(c, "-" + p)
+local fn num_signed_base(c: String, raw: String, kind: String) -> Value = {
+  let neg = string.starts_with(c, "-")
+  let skip = if neg then 3 else 2
+  let digits = string.drop(c, skip)
+  let parsed = if kind == "o" then parse_oct(digits) else parse_bin(digits)
+  match parsed { ok(n) => value.int(if neg then 0 - n else n), err(_) => value.str(raw) }
 }
-
-local fn try_decimal(c: String, s: String) -> Value =
-  match int.parse(c) {
-    ok(n) => value.int(n),
-    err(_) => match float.parse(c) { ok(f) => value.float(f), err(_) => value.str(s) },
+local fn is_legacy_oct(c: String) -> Bool =
+  (string.len(c) > 1 and string.starts_with(c, "0") and not string.contains(c, ".") and not string.contains(c, "e"))
+  or (string.len(c) > 2 and string.starts_with(c, "-0") and not string.contains(c, "."))
+local fn num_legacy_oct(c: String, raw: String) -> Value = {
+  let neg = string.starts_with(c, "-")
+  match parse_oct(string.drop(c, if neg then 2 else 1)) {
+    ok(n) => value.int(if neg then 0 - n else n), err(_) => try_decimal(c, raw),
   }
-
-local fn parse_octal(s: String) -> Result[Int, String] = parse_octal_rec(string.chars(s), 0)
-
-local fn parse_octal_rec(chars: List[String], acc: Int) -> Result[Int, String] =
-  match list.first(chars) {
+}
+local fn try_decimal(c: String, raw: String) -> Value =
+  match int.parse(c) { ok(n) => value.int(n), err(_) => match float.parse(c) { ok(f) => value.float(f), err(_) => value.str(raw) } }
+local fn parse_oct(s: String) -> Result[Int, String] = oct_rec(string.chars(s), 0)
+local fn oct_rec(cs: List[String], acc: Int) -> Result[Int, String] =
+  match list.first(cs) {
     none => ok(acc),
-    some(ch) => {
-      let d = (string.codepoint(ch) ?? 0) - 48
-      if d >= 0 and d < 8 then parse_octal_rec(list.drop(chars, 1), acc * 8 + d)
-      else err("invalid octal")
-    },
+    some(ch) => { let d = (string.codepoint(ch) ?? 0) - 48; if d >= 0 and d < 8 then oct_rec(list.drop(cs, 1), acc * 8 + d) else err("bad") },
   }
-
-local fn parse_binary(s: String) -> Result[Int, String] = parse_binary_rec(string.chars(s), 0)
-
-local fn parse_binary_rec(chars: List[String], acc: Int) -> Result[Int, String] =
-  match list.first(chars) {
+local fn parse_bin(s: String) -> Result[Int, String] = bin_rec(string.chars(s), 0)
+local fn bin_rec(cs: List[String], acc: Int) -> Result[Int, String] =
+  match list.first(cs) {
     none => ok(acc),
-    some(ch) => {
-      if ch == "0" then parse_binary_rec(list.drop(chars, 1), acc * 2)
-      else if ch == "1" then parse_binary_rec(list.drop(chars, 1), acc * 2 + 1)
-      else err("invalid binary")
-    },
+    some(ch) => if ch == "0" then bin_rec(list.drop(cs, 1), acc * 2) else if ch == "1" then bin_rec(list.drop(cs, 1), acc * 2 + 1) else err("bad"),
   }
 
-local fn unescape(s: String) -> String = unescape_rec(s, 0, "")
-
-local fn unescape_rec(s: String, pos: Int, acc: String) -> String = {
+local fn unescape(s: String) -> String = esc_rec(s, 0, "")
+local fn esc_rec(s: String, pos: Int, acc: String) -> String =
   if pos >= string.len(s) then acc
-  else {
-    let c = string.get(s, pos) ?? ""
-    if c == "\\" then {
-      match string.get(s, pos + 1) ?? "" {
-        "n" => unescape_rec(s, pos + 2, acc + "\n"),
-        "t" => unescape_rec(s, pos + 2, acc + "\t"),
-        "r" => unescape_rec(s, pos + 2, acc + "\r"),
-        "\\" => unescape_rec(s, pos + 2, acc + "\\"),
-        "\"" => unescape_rec(s, pos + 2, acc + "\""),
-        other => unescape_rec(s, pos + 2, acc + "\\" + other),
-      }
-    } else unescape_rec(s, pos + 1, acc + c)
-  }
-}
+  else esc_step(s, pos, acc, string.get(s, pos) ?? "")
+local fn esc_step(s: String, pos: Int, acc: String, c: String) -> String =
+  if c == "\\" then esc_rec(s, pos + 2, acc + esc_char(string.get(s, pos + 1) ?? ""))
+  else esc_rec(s, pos + 1, acc + c)
+local fn esc_char(c: String) -> String =
+  match c { "n" => "\n", "t" => "\t", "r" => "\r", "\\" => "\\", "\"" => "\"", o => "\\" + o }
 
-// ── Flow collection parsers ─────────────────────────
-
-local fn parse_flow_sequence(s: String) -> Value = {
+local fn parse_flow_seq(s: String) -> Value = {
   let inner = string.trim(string.slice(s, 1, string.len(s) - 1))
   if string.is_empty(inner) then value.array([])
-  else value.array(split_flow(inner) |> list.map((item) => parse_scalar(string.trim(item))))
+  else value.array(split_flow(inner) |> list.map((i) => parse_scalar(string.trim(i))))
 }
-
-local fn parse_flow_mapping(s: String) -> Value = {
+local fn parse_flow_map(s: String) -> Value = {
   let inner = string.trim(string.slice(s, 1, string.len(s) - 1))
   if string.is_empty(inner) then value.object([])
-  else value.object(split_flow(inner) |> list.map((entry) => {
-    let t = string.trim(entry)
+  else value.object(split_flow(inner) |> list.map((e) => {
+    let t = string.trim(e)
     let cp = find_colon(t) ?? 0
     (string.trim(string.slice(t, 0, cp)), parse_scalar(string.trim(string.drop(t, cp + 1))))
   }))
 }
+local fn split_flow(s: String) -> List[String] = flow_rec(s, 0, 0, 0, [])
+local fn flow_rec(s: String, pos: Int, start: Int, depth: Int, acc: List[String]) -> List[String] =
+  if pos >= string.len(s) then { let last = string.trim(string.slice(s, start, pos)); if string.is_empty(last) then acc else acc + [last] }
+  else flow_step(s, pos, start, depth, acc, string.get(s, pos) ?? "")
+local fn flow_step(s: String, pos: Int, start: Int, depth: Int, acc: List[String], c: String) -> List[String] =
+  if c == "[" or c == "{" then flow_rec(s, pos + 1, start, depth + 1, acc)
+  else if c == "]" or c == "}" then flow_rec(s, pos + 1, start, depth - 1, acc)
+  else if c == "," and depth == 0 then flow_rec(s, pos + 1, pos + 1, 0, acc + [string.slice(s, start, pos)])
+  else flow_rec(s, pos + 1, start, depth, acc)
 
-local fn split_flow(s: String) -> List[String] = split_flow_rec(s, 0, 0, 0, [])
-
-local fn split_flow_rec(s: String, pos: Int, start: Int, depth: Int, acc: List[String]) -> List[String] = {
-  if pos >= string.len(s) then {
-    let last = string.trim(string.slice(s, start, pos))
-    if string.is_empty(last) then acc else acc + [last]
-  } else {
-    let c = string.get(s, pos) ?? ""
-    if c == "[" or c == "{" then split_flow_rec(s, pos + 1, start, depth + 1, acc)
-    else if c == "]" or c == "}" then split_flow_rec(s, pos + 1, start, depth - 1, acc)
-    else if c == "," and depth == 0 then split_flow_rec(s, pos + 1, pos + 1, depth, acc + [string.slice(s, start, pos)])
-    else split_flow_rec(s, pos + 1, start, depth, acc)
-  }
-}
-
-// ── Serializer ──────────────────────────────────────
-
-local fn emit(v: Value, indent: Int) -> String =
-  match value.as_string(v) { ok(str) => emit_scalar(str), err(_) =>
-  match value.as_int(v) { ok(n) => int.to_string(n), err(_) =>
+local fn emit(v: Value, ind: Int) -> String =
+  match value.as_string(v) { ok(s) => emit_scalar(s), err(_) => emit_non_string(v, ind) }
+local fn emit_non_string(v: Value, ind: Int) -> String =
+  match value.as_int(v) { ok(n) => int.to_string(n), err(_) => emit_non_int(v, ind) }
+local fn emit_non_int(v: Value, ind: Int) -> String =
   match value.as_float(v) { ok(f) => float.to_string(f), err(_) =>
   match value.as_bool(v) { ok(b) => if b then "true" else "false", err(_) =>
-  match value.as_array(v) { ok(items) => emit_seq(items, indent),
-  err(_) => {
-    let keys = json.keys(v)
-    if list.is_empty(keys) then {
-      if value.stringify(v) == "null" then "null" else "{}"
-    } else emit_map(v, keys, indent)
-  }}}}}}
-
-local fn emit_scalar(s: String) -> String = {
-  let low = string.to_lower(s)
-  if string.contains(s, ": ") or string.contains(s, "#") or string.contains(s, "\n")
-     or string.starts_with(s, "- ") or string.starts_with(s, "[") or string.starts_with(s, "{")
-     or low == "true" or low == "false" or low == "null" or s == "~" or s == ""
-     or low == "yes" or low == "no" or low == "on" or low == "off" then
-    "\"${string.replace(string.replace(s, "\\", "\\\\"), "\"", "\\\"")}\""
-  else match int.parse(s) {
-    ok(_) => "\"${s}\"",
-    err(_) => match float.parse(s) { ok(_) => "\"${s}\"", err(_) => s },
-  }
+  match value.as_array(v) { ok(items) => emit_seq(items, ind), err(_) => emit_obj(v, ind) }}}
+local fn emit_obj(v: Value, ind: Int) -> String = {
+  let keys = json.keys(v)
+  if list.is_empty(keys) then (if value.stringify(v) == "null" then "null" else "{}")
+  else emit_map(v, keys, ind)
 }
-
-local fn emit_seq(items: List[Value], indent: Int) -> String = {
-  let p = string.repeat("  ", indent)
+local fn emit_scalar(s: String) -> String =
+  if needs_quote(s) then "\"${string.replace(string.replace(s, "\\", "\\\\"), "\"", "\\\"")}\""
+  else s
+local fn needs_quote(s: String) -> Bool =
+  has_special_chars(s) or is_reserved_word(s) or looks_numeric(s)
+local fn has_special_chars(s: String) -> Bool =
+  string.contains(s, ": ") or string.contains(s, "#") or string.contains(s, "\n")
+  or string.starts_with(s, "- ") or string.starts_with(s, "[") or string.starts_with(s, "{")
+local fn is_reserved_word(s: String) -> Bool = { let l = string.to_lower(s); is_null_str(s) or is_bool_true(l) or is_bool_false(l) }
+local fn looks_numeric(s: String) -> Bool =
+  match int.parse(s) { ok(_) => true, err(_) => match float.parse(s) { ok(_) => true, err(_) => false } }
+local fn emit_seq(items: List[Value], ind: Int) -> String = {
+  let p = string.repeat("  ", ind)
   if list.is_empty(items) then "[]"
-  else items
-    |> list.map((item) => {
-      let r = emit(item, indent + 1)
-      if is_collection(item) then "${p}-\n${r}" else "${p}- ${r}"
-    })
-    |> list.join("\n")
+  else items |> list.map((item) => {
+    if is_compound(item) then "${p}-\n${emit(item, ind + 1)}" else "${p}- ${emit(item, ind + 1)}"
+  }) |> list.join("\n")
 }
-
-local fn emit_map(v: Value, keys: List[String], indent: Int) -> String = {
-  let p = string.repeat("  ", indent)
-  if list.is_empty(keys) then "{}"
-  else keys
-    |> list.map((key) => {
-      let val = value.get(v, key) ?? value.null()
-      let ks = emit_scalar(key)
-      if is_collection(val) then "${p}${ks}:\n${emit(val, indent + 1)}"
-      else "${p}${ks}: ${emit(val, indent + 1)}"
-    })
-    |> list.join("\n")
+local fn emit_map(v: Value, keys: List[String], ind: Int) -> String = {
+  let p = string.repeat("  ", ind)
+  keys |> list.map((key) => {
+    let val = value.get(v, key) ?? value.null()
+    let ks = emit_scalar(key)
+    if is_compound(val) then "${p}${ks}:\n${emit(val, ind + 1)}" else "${p}${ks}: ${emit(val, ind + 1)}"
+  }) |> list.join("\n")
 }
-
-local fn is_collection(v: Value) -> Bool =
-  if value.stringify(v) == "null" then false
-  else match value.as_array(v) { ok(_) => true, err(_) =>
-  match value.as_string(v) { ok(_) => false, err(_) =>
-  match value.as_int(v) { ok(_) => false, err(_) =>
-  match value.as_float(v) { ok(_) => false, err(_) =>
-  match value.as_bool(v) { ok(_) => false, err(_) =>
-  true }}}}}
+local fn is_compound(v: Value) -> Bool =
+  match value.as_array(v) { ok(_) => true, err(_) => is_map_value(v) }
+local fn is_map_value(v: Value) -> Bool = not (value.stringify(v) == "null" or is_scalar_type(v))
+local fn is_scalar_type(v: Value) -> Bool =
+  match value.as_string(v) { ok(_) => true, err(_) => is_numeric_or_bool(v) }
+local fn is_numeric_or_bool(v: Value) -> Bool =
+  match value.as_int(v) { ok(_) => true, err(_) =>
+  match value.as_float(v) { ok(_) => true, err(_) =>
+  match value.as_bool(v) { ok(_) => true, err(_) => false }}}
