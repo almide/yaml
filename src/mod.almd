@@ -1,4 +1,3 @@
-import json
 
 effect fn parse(text: String) -> Value = {
   let lines = string.replace(text, "\r\n", "\n")
@@ -248,7 +247,7 @@ local fn emit_non_int(v: Value, ind: Int) -> String =
   match value.as_bool(v) { ok(b) => if b then "true" else "false", err(_) =>
   match value.as_array(v) { ok(items) => emit_seq(items, ind), err(_) => emit_obj(v, ind) }}}
 local fn emit_obj(v: Value, ind: Int) -> String = {
-  let keys = json.keys(v)
+  let keys = value.keys(v)
   if list.is_empty(keys) then (if value.stringify(v) == "null" then "null" else "{}")
   else emit_map(v, keys, ind)
 }
@@ -273,7 +272,7 @@ local fn emit_seq(items: List[Value], ind: Int) -> String = {
 local fn emit_map(v: Value, keys: List[String], ind: Int) -> String = {
   let p = string.repeat("  ", ind)
   keys |> list.map((key) => {
-    let val = value.get(v, key) ?? value.null()
+    let val = value.field(v, key) ?? value.null()
     let ks = emit_scalar(key)
     if is_compound(val) then "${p}${ks}:\n${emit(val, ind + 1)}" else "${p}${ks}: ${emit(val, ind + 1)}"
   }) |> list.join("\n")
