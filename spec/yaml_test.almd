@@ -1,5 +1,4 @@
 import self as yaml
-import json
 
 fn unwrap(r: Result[Value, String]) -> Value = match r {
   ok(v) => v,
@@ -7,19 +6,19 @@ fn unwrap(r: Result[Value, String]) -> Value = match r {
 }
 
 fn gs(v: Value, key: String) -> String =
-  value.as_string(value.get(v, key) ?? value.null()) ?? ""
+  value.as_string(value.field(v, key) ?? value.null()) ?? ""
 
 fn gi(v: Value, key: String) -> Int =
-  value.as_int(value.get(v, key) ?? value.null()) ?? 0
+  value.as_int(value.field(v, key) ?? value.null()) ?? 0
 
 fn gf(v: Value, key: String) -> Float =
-  value.as_float(value.get(v, key) ?? value.null()) ?? 0.0
+  value.as_float(value.field(v, key) ?? value.null()) ?? 0.0
 
 fn gb(v: Value, key: String) -> Bool =
-  value.as_bool(value.get(v, key) ?? value.null()) ?? false
+  value.as_bool(value.field(v, key) ?? value.null()) ?? false
 
 fn go(v: Value, key: String) -> Value =
-  value.get(v, key) ?? value.object([])
+  value.field(v, key) ?? value.object([])
 
 fn ga(v: Value) -> List[Value] = value.as_array(v) ?? []
 
@@ -252,7 +251,7 @@ test "empty flow sequence" {
 }
 
 test "empty flow mapping" {
-  assert_eq(list.len(json.keys(go(unwrap(yaml.parse("meta: {}")), "meta"))), 0)
+  assert_eq(list.len(value.keys(go(unwrap(yaml.parse("meta: {}")), "meta"))), 0)
 }
 
 test "flow sequence of numbers" {
@@ -684,17 +683,17 @@ test "bool FALSE" {
 
 test "empty value is null (explicit)" {
   let v = unwrap(yaml.parse("empty:"))
-  assert_eq(value.stringify(value.get(v, "empty") ?? value.null()), "null")
+  assert_eq(value.stringify(value.field(v, "empty") ?? value.null()), "null")
 }
 
 test "tilde is null" {
   let v = unwrap(yaml.parse("v: ~"))
-  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+  assert_eq(value.stringify(value.field(v, "v") ?? value.null()), "null")
 }
 
 test "english null" {
   let v = unwrap(yaml.parse("v: null"))
-  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+  assert_eq(value.stringify(value.field(v, "v") ?? value.null()), "null")
 }
 
 // ═══════════════════════════════════════════════════════
@@ -992,7 +991,7 @@ test "roundtrip null value" {
   let obj = value.object([("v", value.null())])
   let text = yaml.stringify(obj)
   let v = unwrap(yaml.parse(text))
-  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+  assert_eq(value.stringify(value.field(v, "v") ?? value.null()), "null")
 }
 
 test "roundtrip integer" {
