@@ -130,7 +130,7 @@ local effect fn nested_dispatch(lines: List[String], pos: Int, ci: Int, t: Strin
 local fn block_scalar(lines: List[String], start: Int, parent: Int, ind: String) -> (Value, Int) = {
   let (content, end) = collect_block(lines, start, parent, -1, [])
   let joined = if string.starts_with(ind, "|") then list.join(content, "\n") else list.join(content, " ")
-  (value.str(if string.ends_with(ind, "-") then joined else joined + "\n"), end)
+  (value.string(if string.ends_with(ind, "-") then joined else joined + "\n"), end)
 }
 local fn collect_block(lines: List[String], pos: Int, parent: Int, bi: Int, acc: List[String]) -> (List[String], Int) =
   if pos >= list.len(lines) then (acc, pos)
@@ -157,8 +157,8 @@ local fn scalar_typed(s: String, low: String) -> Value =
   else if is_bool_false(low) then value.bool(false)
   else scalar_value(s, low)
 local fn scalar_value(s: String, low: String) -> Value =
-  if is_quoted(s, "'") then value.str(string.slice(s, 1, string.len(s) - 1))
-  else if is_quoted(s, "\"") then value.str(unescape(string.slice(s, 1, string.len(s) - 1)))
+  if is_quoted(s, "'") then value.string(string.slice(s, 1, string.len(s) - 1))
+  else if is_quoted(s, "\"") then value.string(unescape(string.slice(s, 1, string.len(s) - 1)))
   else scalar_numeric(s, low)
 local fn scalar_numeric(s: String, low: String) -> Value =
   if low == ".inf" or low == "+.inf" then value.float(1.0 / 0.0)
@@ -168,7 +168,7 @@ local fn scalar_numeric(s: String, low: String) -> Value =
 
 local fn parse_number(c: String, raw: String) -> Value =
   if string.starts_with(c, "0x") or string.starts_with(c, "0X") then
-    match int.from_hex(string.drop(c, 2)) { ok(n) => value.int(n), err(_) => value.str(raw) }
+    match int.parse_radix(string.drop(c, 2), 16) { ok(n) => value.int(n), err(_) => value.string(raw) }
   else if has_prefix(c, "0o") or has_prefix(c, "0O") then num_signed_base(c, raw, "o")
   else if has_prefix(c, "0b") or has_prefix(c, "0B") then num_signed_base(c, raw, "b")
   else if is_legacy_oct(c) then num_legacy_oct(c, raw)
@@ -179,7 +179,7 @@ local fn num_signed_base(c: String, raw: String, kind: String) -> Value = {
   let skip = if neg then 3 else 2
   let digits = string.drop(c, skip)
   let parsed = if kind == "o" then parse_oct(digits) else parse_bin(digits)
-  match parsed { ok(n) => value.int(if neg then 0 - n else n), err(_) => value.str(raw) }
+  match parsed { ok(n) => value.int(if neg then 0 - n else n), err(_) => value.string(raw) }
 }
 local fn is_legacy_oct(c: String) -> Bool =
   (string.len(c) > 1 and string.starts_with(c, "0") and not string.contains(c, ".") and not string.contains(c, "e"))
@@ -191,14 +191,14 @@ local fn num_legacy_oct(c: String, raw: String) -> Value = {
   }
 }
 local fn try_decimal(c: String, raw: String) -> Value =
-  match int.parse(c) { ok(n) => value.int(n), err(_) => match float.parse(c) { ok(f) => value.float(f), err(_) => value.str(raw) } }
-local fn parse_oct(s: String) -> Result[Int, String] = oct_rec(string.chars(s), 0)
+  match int.parse(c) { ok(n) => value.int(n), err(_) => match float.parse(c) { ok(f) => value.float(f), err(_) => value.string(raw) } }
+local fn parse_oct(s: String) -> Result[Int, String] = oct_rec(string.to_list(s), 0)
 local fn oct_rec(cs: List[String], acc: Int) -> Result[Int, String] =
   match list.first(cs) {
     none => ok(acc),
-    some(ch) => { let d = (string.codepoint(ch) ?? 0) - 48; if d >= 0 and d < 8 then oct_rec(list.drop(cs, 1), acc * 8 + d) else err("bad") },
+    some(ch) => { let d = (string.to_codepoint(ch) ?? 0) - 48; if d >= 0 and d < 8 then oct_rec(list.drop(cs, 1), acc * 8 + d) else err("bad") },
   }
-local fn parse_bin(s: String) -> Result[Int, String] = bin_rec(string.chars(s), 0)
+local fn parse_bin(s: String) -> Result[Int, String] = bin_rec(string.to_list(s), 0)
 local fn bin_rec(cs: List[String], acc: Int) -> Result[Int, String] =
   match list.first(cs) {
     none => ok(acc),
@@ -248,8 +248,8 @@ local fn emit_non_int(v: Value, ind: Int) -> String =
   match value.as_bool(v) { ok(b) => if b then "true" else "false", err(_) =>
   match value.as_array(v) { ok(items) => emit_seq(items, ind), err(_) => emit_obj(v, ind) }}}
 local fn emit_obj(v: Value, ind: Int) -> String = {
-  let keys = json.keys(v)
-  if list.is_empty(keys) then (if value.stringify(v) == "null" then "null" else "{}")
+  let keys = (value.as_object(v) ?? []) |> list.map(((k, _)) => k)
+  if list.is_empty(keys) then (if json.stringify(v) == "null" then "null" else "{}")
   else emit_map(v, keys, ind)
 }
 local fn emit_scalar(s: String) -> String =
@@ -280,7 +280,7 @@ local fn emit_map(v: Value, keys: List[String], ind: Int) -> String = {
 }
 local fn is_compound(v: Value) -> Bool =
   match value.as_array(v) { ok(_) => true, err(_) => is_map_value(v) }
-local fn is_map_value(v: Value) -> Bool = not (value.stringify(v) == "null" or is_scalar_type(v))
+local fn is_map_value(v: Value) -> Bool = not (json.stringify(v) == "null" or is_scalar_type(v))
 local fn is_scalar_type(v: Value) -> Bool =
   match value.as_string(v) { ok(_) => true, err(_) => is_numeric_or_bool(v) }
 local fn is_numeric_or_bool(v: Value) -> Bool =

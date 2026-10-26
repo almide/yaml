@@ -252,7 +252,7 @@ test "empty flow sequence" {
 }
 
 test "empty flow mapping" {
-  assert_eq(list.len(json.keys(go(unwrap(yaml.parse("meta: {}")), "meta"))), 0)
+  assert_eq(list.len(((value.as_object(go(unwrap(yaml.parse("meta: {}")), "meta")) ?? []) |> list.map(((k, _)) => k))), 0)
 }
 
 test "flow sequence of numbers" {
@@ -327,7 +327,7 @@ test "comment-only lines" {
 }
 
 test "empty input" {
-  assert_eq(value.stringify(unwrap(yaml.parse(""))), "null")
+  assert_eq(json.stringify(unwrap(yaml.parse(""))), "null")
 }
 
 test "blank lines between entries" {
@@ -346,21 +346,21 @@ test "trailing whitespace" {
 // ═══════════════════════════════════════════════════════
 
 test "stringify mapping" {
-  let obj = value.object([("name", value.str("test")), ("port", value.int(80))])
+  let obj = value.object([("name", value.string("test")), ("port", value.int(80))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "name: test"))
   assert(string.contains(text, "port: 80"))
 }
 
 test "stringify sequence" {
-  let arr = value.array([value.str("a"), value.str("b")])
+  let arr = value.array([value.string("a"), value.string("b")])
   let text = yaml.stringify(arr)
   assert(string.contains(text, "- a"))
   assert(string.contains(text, "- b"))
 }
 
 test "stringify nested" {
-  let obj = value.object([("server", value.object([("host", value.str("localhost"))]))])
+  let obj = value.object([("server", value.object([("host", value.string("localhost"))]))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "server:"))
   assert(string.contains(text, "  host: localhost"))
@@ -383,7 +383,7 @@ test "stringify empty array" {
 }
 
 test "stringify special strings" {
-  let obj = value.object([("v", value.str("true"))])
+  let obj = value.object([("v", value.string("true"))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "\"true\""))
 }
@@ -393,7 +393,7 @@ test "stringify special strings" {
 // ═══════════════════════════════════════════════════════
 
 test "roundtrip mapping" {
-  let obj = value.object([("host", value.str("localhost")), ("port", value.int(8080))])
+  let obj = value.object([("host", value.string("localhost")), ("port", value.int(8080))])
   let text = yaml.stringify(obj)
   let v = unwrap(yaml.parse(text))
   assert_eq(gs(v, "host"), "localhost")
@@ -402,7 +402,7 @@ test "roundtrip mapping" {
 
 test "roundtrip nested" {
   let obj = value.object([
-    ("db", value.object([("host", value.str("pg")), ("port", value.int(5432))])),
+    ("db", value.object([("host", value.string("pg")), ("port", value.int(5432))])),
   ])
   let text = yaml.stringify(obj)
   let v = unwrap(yaml.parse(text))
@@ -411,7 +411,7 @@ test "roundtrip nested" {
 }
 
 test "roundtrip sequence" {
-  let arr = value.array([value.str("x"), value.str("y")])
+  let arr = value.array([value.string("x"), value.string("y")])
   let text = yaml.stringify(arr)
   let v = unwrap(yaml.parse(text))
   assert_eq(list.len(ga(v)), 2)
@@ -684,17 +684,17 @@ test "bool FALSE" {
 
 test "empty value is null (explicit)" {
   let v = unwrap(yaml.parse("empty:"))
-  assert_eq(value.stringify(value.get(v, "empty") ?? value.null()), "null")
+  assert_eq(json.stringify(value.get(v, "empty") ?? value.null()), "null")
 }
 
 test "tilde is null" {
   let v = unwrap(yaml.parse("v: ~"))
-  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+  assert_eq(json.stringify(value.get(v, "v") ?? value.null()), "null")
 }
 
 test "english null" {
   let v = unwrap(yaml.parse("v: null"))
-  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+  assert_eq(json.stringify(value.get(v, "v") ?? value.null()), "null")
 }
 
 // ═══════════════════════════════════════════════════════
@@ -893,13 +893,13 @@ test "CRLF line endings" {
 // ═══════════════════════════════════════════════════════
 
 test "stringify true as string is quoted" {
-  let obj = value.object([("v", value.str("true"))])
+  let obj = value.object([("v", value.string("true"))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "\"true\""))
 }
 
 test "stringify false as string is quoted" {
-  let obj = value.object([("v", value.str("false"))])
+  let obj = value.object([("v", value.string("false"))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "\"false\""))
 }
@@ -935,13 +935,13 @@ test "stringify null value" {
 }
 
 test "stringify empty string is quoted" {
-  let obj = value.object([("v", value.str(""))])
+  let obj = value.object([("v", value.string(""))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "\"\""))
 }
 
 test "stringify number-like string is quoted" {
-  let obj = value.object([("v", value.str("10"))])
+  let obj = value.object([("v", value.string("10"))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "\"10\""))
 }
@@ -949,14 +949,14 @@ test "stringify number-like string is quoted" {
 // NOTE: go-yaml quotes "-" as "'-'" but our emit_scalar only checks "- " (with space).
 // This test documents the gap: bare "-" should be quoted to avoid ambiguity with sequence.
 test "stringify dash roundtrips" {
-  let obj = value.object([("a", value.str("-"))])
+  let obj = value.object([("a", value.string("-"))])
   let text = yaml.stringify(obj)
   // Whether quoted or not, roundtrip should preserve the value
   assert(string.contains(text, "a:"))
 }
 
 test "stringify sequence under mapping" {
-  let obj = value.object([("v", value.array([value.str("A"), value.str("B")]))])
+  let obj = value.object([("v", value.array([value.string("A"), value.string("B")]))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "v:"))
   assert(string.contains(text, "- A"))
@@ -964,7 +964,7 @@ test "stringify sequence under mapping" {
 }
 
 test "stringify nested map" {
-  let obj = value.object([("a", value.object([("b", value.str("c"))]))])
+  let obj = value.object([("a", value.object([("b", value.string("c"))]))])
   let text = yaml.stringify(obj)
   assert(string.contains(text, "a:"))
   assert(string.contains(text, "b: c"))
@@ -992,7 +992,7 @@ test "roundtrip null value" {
   let obj = value.object([("v", value.null())])
   let text = yaml.stringify(obj)
   let v = unwrap(yaml.parse(text))
-  assert_eq(value.stringify(value.get(v, "v") ?? value.null()), "null")
+  assert_eq(json.stringify(value.get(v, "v") ?? value.null()), "null")
 }
 
 test "roundtrip integer" {
@@ -1010,14 +1010,14 @@ test "roundtrip float" {
 }
 
 test "roundtrip empty string" {
-  let obj = value.object([("v", value.str(""))])
+  let obj = value.object([("v", value.string(""))])
   let text = yaml.stringify(obj)
   let v = unwrap(yaml.parse(text))
   assert_eq(gs(v, "v"), "")
 }
 
 test "roundtrip string off" {
-  let obj = value.object([("a", value.str("off"))])
+  let obj = value.object([("a", value.string("off"))])
   let text = yaml.stringify(obj)
   let v = unwrap(yaml.parse(text))
   assert_eq(gs(v, "a"), "off")
