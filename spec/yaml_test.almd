@@ -427,7 +427,7 @@ type DbConf: Codec = { host: String, port: Int }
 
 test "codec encode" {
   let cfg = Config { host: "0.0.0.0", port: 3000, debug: true }
-  let text = yaml.encode(cfg)
+  let text = yaml.stringify(Config.encode(cfg))
   assert(string.contains(text, "host:"))
   assert(string.contains(text, "0.0.0.0"))
   assert(string.contains(text, "port: 3000"))
@@ -435,7 +435,7 @@ test "codec encode" {
 
 test "codec roundtrip" {
   let cfg = Config { host: "db.local", port: 5432, debug: false }
-  let text = yaml.encode(cfg)
+  let text = yaml.stringify(Config.encode(cfg))
   match yaml.parse(text) {
     ok(v) => match Config.decode(v) {
       ok(c) => {
@@ -451,7 +451,7 @@ test "codec roundtrip" {
 
 test "codec nested roundtrip" {
   let cfg = Nested { db: DbConf { host: "pg.local", port: 5432 } }
-  let text = yaml.encode(cfg)
+  let text = yaml.stringify(Nested.encode(cfg))
   match yaml.parse(text) {
     ok(v) => match Nested.decode(v) {
       ok(c) => {

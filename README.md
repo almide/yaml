@@ -33,7 +33,7 @@ import yaml
 type ServerConfig: Codec = { host: String, port: Int, debug: Bool }
 
 // Encode a typed record to YAML string
-let text = yaml.encode(ServerConfig { host: "0.0.0.0", port: 3000, debug: true })
+let text = yaml.stringify(ServerConfig.encode(ServerConfig { host: "0.0.0.0", port: 3000, debug: true }))
 
 // Decode YAML string to a typed record
 let config = ServerConfig.decode(yaml.parse(text)!)!
@@ -45,8 +45,6 @@ let config = ServerConfig.decode(yaml.parse(text)!)!
 |---|---|---|
 | `yaml.parse` | `(String) -> Result[Value, String]` | Parse YAML text into a Value |
 | `yaml.stringify` | `(Value) -> String` | Serialize a Value to YAML text |
-| `yaml.encode` | `(T: Codec) -> String` | Encode a Codec type to YAML |
-| `yaml.decode[T]` | `(String) -> Result[T, String]` | Decode YAML to a Codec type |
 
 ## Supported Features
 
